@@ -1,0 +1,21 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": "--wnet plain   --mixer MixerMaxRes3@3 --batchSize 3 --initLr 0.001 --epochs 11 --resumeTrain 0 --config debug  --device 1 --debug 1",
+            //"args": "--gpu 0  --YamlPackage HW300 --modelSavePath /data1/haochuan/Character/PtTrainedFeatureExtractors/Debug --network VGG19Net --type style-hw300  --epochs 7",
+            "env": {"CUDA_VISIBLE_DEVICES": "0",
+}
+
+
+        }
+    ]
+}
