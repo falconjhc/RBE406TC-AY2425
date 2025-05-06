@@ -251,11 +251,13 @@ class Loss(nn.Module):
         deepPerceptualContentSum, deepPerceptualStyleSum, contentMSEList, styleMSEList = \
             self.FeatureExtractorLoss(GT=GT, imgFake=generated)
 
-
+        deepLossContent = sum([x * y for x, y in zip(contentMSEList, self.PenaltyContentFeatureExtractor)])/sum(self.PenaltyContentFeatureExtractor)
+        deepLossStyle = sum([x * y for x, y in zip(styleMSEList, self.PenaltyStyleFeatureExtractor)])/sum(self.PenaltyContentFeatureExtractor)
         
         
         sumLossG = lossL1 * self.PenaltyReconstructionL1 + \
                 (lossConstContentReal + lossConstContentFake) * self.PenaltyConstContent + \
+                +deepLossContent+deepLossStyle+\
                 (lossConstStyleReal + lossConstStyleFake) * self.PenaltyConstStyle
                 
 

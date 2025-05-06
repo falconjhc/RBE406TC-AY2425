@@ -200,7 +200,7 @@ class Trainer(nn.Module):
         # Set number of workers for loading data based on the debug mode
         if not self.debug:
             workersNum = multiprocessing.cpu_count() // 3  # Use one-third of the available CPU cores
-            workersNum =24
+            workersNum = 24
         else:
             workersNum = 1  # No multiprocessing in debug mode
         # Log the number of threads used for reading data
@@ -463,7 +463,7 @@ class Trainer(nn.Module):
             
             self.optimizerG.zero_grad()
             sumLossG.backward()  # Compute gradients
-            self.optimizerG.step()  # Update model parameters
+            
         
             # Gradient norm clipping and adjustment (if enabled)
             if self.config.trainParams.gradientNorm:
@@ -476,8 +476,8 @@ class Trainer(nn.Module):
                             gradNorm = torch.norm(param.grad)  # Recompute gradient norm
                             scaleFactor = self.gradNormScheduler.GetThreshold() / (gradNorm + eps)  # Adjust scale factor
                             param.grad = param.grad*scaleFactor  # Scale up the gradient
-                
-
+            
+            self.optimizerG.step()  # Update model parameters
             self.iters = self.iters+ 1  # Update iteration count
 
             # Log and write summaries at regular intervals
