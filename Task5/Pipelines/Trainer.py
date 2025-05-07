@@ -149,19 +149,9 @@ class Trainer(nn.Module):
         self.startEpoch = 0  # Initialize starting epoch
 
         # Model initialization: select the appropriate WNetGenerator model based on configuration
-        # WNetGenerator = PlainWnet
         self.generator = WNetGenerator(self.config, self.sessionLog)
         self.generator.train()  # Set the model to training mode
         self.generator.cuda()  # Move the model to GPU
-        
-
-        # gpu_device = []
-        # if torch.cuda.is_available():
-        #     gpu_device = ['cuda:' + str(i) for i in range(torch.cuda.device_count())]
-        
-        # self.discriminator = Critic()
-        # self.discriminator.train()
-        # self.discriminator.cuda()
         
         
 
@@ -183,11 +173,8 @@ class Trainer(nn.Module):
         if self.config.trainParams.optimizer == 'adam':
             self.optimizerG = torch.optim.Adam(self.generator.parameters(), lr=self.config.trainParams.initLr, betas=(0.0, 0.9),
                                               weight_decay=self.penalties.PenaltyGeneratorWeightRegularizer)
-            # self.optimizerD = torch.optim.Adam(self.discriminator.parameters(), lr=self.config.trainParams.initLr, betas=(0.0, 0.9),
-                                            #   weight_decay=0)
         elif self.config.trainParams.optimizer == 'sgd':
             self.optimizerG = torch.optim.SGD(self.generator.parameters(), lr=self.config.trainParams.initLr, momentum=0.9)
-            # self.optimizerD = torch.optim.SGD(self.discriminator.parameters(), lr=self.config.trainParams.initLr, momentum=0.9)
         elif self.config.trainParams.optimizer == 'rms':
             self.optimizerG = torch.optim.RMSprop(self.generator.parameters(), lr=self.config.trainParams.initLr,
                                                  alpha=0.99, eps=1e-08,
@@ -226,7 +213,7 @@ class Trainer(nn.Module):
 
         # Gradient norm scheduler
         gradNormGamma = np.power(0.75, 1.0 / (self.config.trainParams.epochs - 1))
-        self.gradNormScheduler = ThresholdScheduler(MIN_gradNorm, gradNormGamma)
+        self.gradGNormScheduler = ThresholdScheduler(MIN_gradNorm, gradNormGamma)
 
         # Resume training from the latest checkpoint if required
         if self.config.userInterface.resumeTrain == 1:
@@ -261,12 +248,12 @@ class Trainer(nn.Module):
 
             # Apply the learning rate and gradient schedulers up to the start epoch
             for _ in range(self.startEpoch):
-                self.gradNormScheduler.Step()  # Adjust gradient norm threshold
+                self.gradGNormScheduler.Step()  # Adjust gradient norm threshold
                 self.lrScheculerG.step()  # Adjust learning rate
             self.startEpoch = self.startEpoch
 
         # Initialize a dictionary to record gradient values
-        self.grad = {}
+        self.gradG = {}
 
         class _gradient():
             def __init__(self):
@@ -276,28 +263,22 @@ class Trainer(nn.Module):
         # Populate the gradient dictionary with parameters from the model
         for idx, (name, param) in enumerate(self.generator.named_parameters()):
             subName, layerName = name.split('.')[0], name.split('.')[1]
-            if subName not in self.grad:
-                self.grad.update({subName: {}})
-            if layerName not in self.grad[subName]:
-                self.grad[subName].update({layerName: _gradient()})
-            self.grad[subName][layerName].count = self.grad[subName][layerName].count + 1
+            if subName not in self.gradG:
+                self.gradG.update({subName: {}})
+            if layerName not in self.gradG[subName]:
+                self.gradG[subName].update({layerName: _gradient()})
+            self.gradG[subName][layerName].count = self.gradG[subName][layerName].count + 1
 
-        # Reset the data augmentation if resuming training from an early epoch
-        if self.startEpoch < START_TRAIN_EPOCHS:
-            self.trainset.ResetTrainAugment(info=self.augmentationApproach[0])
-        elif self.startEpoch < INITIAL_TRAIN_EPOCHS:
-            self.trainset.ResetTrainAugment(info=self.augmentationApproach[1])
-        else:
-            self.trainset.ResetTrainAugment(info=self.augmentationApproach[2])
+        
 
         # Log that the trainer is ready
         PrintInfoLog(self.sessionLog, 'Trainer prepared.')
 
     def ClearGradRecords(self):
         """Reset gradient records to 0 for all layers."""
-        for idx1, (subName, subDict) in enumerate(self.grad.items()):
-            for idx2, (key, value) in enumerate(self.grad[subName].items()):
-                self.grad[subName][key].value = 0.0
+        for idx1, (subName, subDict) in enumerate(self.gradG.items()):
+            for idx2, (key, value) in enumerate(self.gradG[subName].items()):
+                self.gradG[subName][key].value = 0.0
 
     def SummaryWriting(self, evalContents, evalStyles, evalGTs, evalFakes, epoch, step, 
                        lossG, lossDict, mark='NA', writeImageToDisk=False):
@@ -380,16 +361,16 @@ class Trainer(nn.Module):
             for idx, (name, param) in enumerate(self.generator.named_parameters()):
                 if param.grad is not None:
                     subName, layerName = name.split('.')[0], name.split('.')[1]
-                    self.grad[subName][layerName].value = self.grad[subName][layerName].value + torch.norm(param.grad)
+                    self.gradG[subName][layerName].value = self.gradG[subName][layerName].value + torch.norm(param.grad)
 
             # Log gradient norms to TensorBoard
-            self.writer.add_scalar('00-GradientCheck/00-MinGradThreshold', self.gradNormScheduler.GetThreshold(), global_step=step)
+            self.writer.add_scalar('00-GradientCheck/00-MinGradThreshold', self.gradGNormScheduler.GetThreshold(), global_step=step)
             self.writer.add_scalar('00-GradientCheck/00-LearningRate', self.lrScheculerG.get_lr()[0], global_step=step)
-            for idx1, (subName, subDict) in enumerate(self.grad.items()):
-                for idx2, (layerName, value) in enumerate(self.grad[subName].items()):
+            for idx1, (subName, subDict) in enumerate(self.gradG.items()):
+                for idx2, (layerName, value) in enumerate(self.gradG[subName].items()):
                     currentName = subName + '-' + layerName
                     self.writer.add_scalar('00-GradientCheck/' + currentName, 
-                                           self.grad[subName][layerName].value / self.grad[subName][layerName].count * self.lrScheculerG.get_lr()[0], 
+                                           self.gradG[subName][layerName].value / self.gradG[subName][layerName].count * self.lrScheculerG.get_lr()[0], 
                                            global_step=step)
             
 
@@ -439,8 +420,6 @@ class Trainer(nn.Module):
             lossInputs = {'InputContents': contents, 
                           'InputStyles': reshapedStyle, 
                           'GT': gt, 'fake':generated,
-                        #   'scoreReal':scoreReal,
-                        #   'scoreFake':[scoreFake_forD,scoreFake_forG],
                           'encodedContents':[encodedContentFeatures,encodedContentCategory],
                           'encodedStyles':[encodedStyleFeatures,encodedStyleCategory],
                           'oneHotLabels':[onehotContent, onehotStyle]}
@@ -471,10 +450,10 @@ class Trainer(nn.Module):
                 for name, param in self.generator.named_parameters():
                     if param.grad is not None:
                         gradNorm = torch.norm(param.grad)
-                        if gradNorm < self.gradNormScheduler.GetThreshold():
+                        if gradNorm < self.gradGNormScheduler.GetThreshold():
                             param.grad = param.grad + eps  # Prevent zero gradients by adding epsilon
                             gradNorm = torch.norm(param.grad)  # Recompute gradient norm
-                            scaleFactor = self.gradNormScheduler.GetThreshold() / (gradNorm + eps)  # Adjust scale factor
+                            scaleFactor = self.gradGNormScheduler.GetThreshold() / (gradNorm + eps)  # Adjust scale factor
                             param.grad = param.grad*scaleFactor  # Scale up the gradient
             
             self.optimizerG.step()  # Update model parameters
@@ -562,17 +541,16 @@ class Trainer(nn.Module):
         train_start = time()  # Start time of the entire training process
         training_epoch_list = range(self.startEpoch, self.config.trainParams.epochs, 1)  # List of epochs to train
 
-        self.TestOneEpoch(self.startEpoch-1)  # Test at the start if not skipping    
         if (not self.config.userInterface.skipTest) and self.startEpoch != 0:
             self.TestOneEpoch(self.startEpoch-1)  # Test at the start if not skipping
 
         for epoch in training_epoch_list:
-            # Reset data augmentation strategies based on the epoch
-            if epoch == 0:
+            # Reset the data augmentation if resuming training from an early epoch
+            if self.startEpoch < START_TRAIN_EPOCHS:
                 self.trainset.ResetTrainAugment(info=self.augmentationApproach[0])
-            elif epoch == INITIAL_TRAIN_EPOCHS - 1:
+            elif self.startEpoch < INITIAL_TRAIN_EPOCHS:
                 self.trainset.ResetTrainAugment(info=self.augmentationApproach[1])
-            elif epoch == INITIAL_TRAIN_EPOCHS:
+            else:
                 self.trainset.ResetTrainAugment(info=self.augmentationApproach[2])
 
             # Train and test model at each epoch
@@ -591,13 +569,11 @@ class Trainer(nn.Module):
             torch.save(stateFramework, self.config.userInterface.expDir+'/Frameworks' + '/CkptEpoch%d.pth' % (epoch+1))
             
             
-            
             logging.info(f'Trained model has been saved at Epoch {epoch+1}.')
 
             # Step the learning rate scheduler and gradient norm scheduler
             self.lrScheculerG.step()
-            # self.lrScheculerD.step()
-            self.gradNormScheduler.Step()
+            self.gradGNormScheduler.Step()
 
         # After training, log the total time taken and close the TensorBoard writer
         train_end = time()  # Record the end time of training
