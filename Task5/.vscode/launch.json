@@ -10,8 +10,7 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "args": "--wnet plain   --mixer MixerMaxRes3@3 --batchSize 3 --initLr 0.001 --epochs 11 --resumeTrain 0 --config debug  --device 1 --debug 1",
-            //"args": "--gpu 0  --YamlPackage HW300 --modelSavePath /data1/haochuan/Character/PtTrainedFeatureExtractors/Debug --network VGG19Net --type style-hw300  --epochs 7",
+            "args": "--wnet Plain   --mixer MixerMaxRes3@3 --batchSize 3 --inputStyleNum 5 --epochs 11 --resumeTrain 0 --config debug  --device 1 --debug 1",
             "env": {"CUDA_VISIBLE_DEVICES": "3",
 }
 

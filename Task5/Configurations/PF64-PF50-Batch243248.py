@@ -3,29 +3,20 @@ dataPathRoot = '/data0/haochuan/'
 
 
 hyperParams = {
-        'seed':1,
         'debugMode':1,
-        'expID':'20250503PF-VAEGAN',# experiment name prefix
-        'expDir': '/data-shared/server01/data1/haochuan/CharacterRecords2025May-03/',
-        
-        # user interface
-        'printInfoSeconds':3,
+        'expID':'20250509PF-Batch243248',# experiment name prefix
+        'expDir': '/data-shared/server01/data1/haochuan/CharacterRecords2025May-051/',
 
         'YamlPackage': '../YamlLists/PF64-PF80/',
         
         'FullLabel0Vec': '/data-shared/server09/data0/haochuan/CASIA_Dataset/LabelVecs/PF64-Label0.txt',
         'FullLabel1Vec': '/data-shared/server09/data0/haochuan/CASIA_Dataset/LabelVecs/PF80-Label1.txt',
 
-        
         # training configurations
         'augmentation':'HardAugmentationSchecule', 
-        # Options: ‘NoAugmentation’, 'SimpleAugmentation', 'HardAumentation', 'SimpleAugmentationSchecule', 'HardAugmentationSchecule'
+        # Options: 'NoAugmentation', 'SimpleAugmentation', 'HardAumentation', 'SimpleAugmentationSchecule', 'HardAugmentationSchecule'
         
-        'inputStyleNum':5, 
         'inputContentNum':64,
-
-        'discriminator':'NA',
-
 
         # input params
         'imgWidth':64,
@@ -34,9 +25,7 @@ hyperParams = {
         # optimizer setting
         'optimizer':'adam',
         'gradNorm': 1,
-        'initTrainEpochs':0,
-        'final_learning_rate_pctg':0.01,
-
+        
         # feature extractor parametrers
         'TrueFakeExtractorPath': [],
         'ContentExtractorPath':[
@@ -57,7 +46,11 @@ hyperParams = {
                 '/data-shared/server09/data1/haochuan/Codes/MuyinWNet/FeatureExtractorTrained/20240928New/Ckpts/Style/ResNet18/BestExtractor.pth',
                 '/data-shared/server09/data1/haochuan/Codes/MuyinWNet/FeatureExtractorTrained/20240928New/Ckpts/Style/ResNet34/BestExtractor.pth',
                 '/data-shared/server09/data1/haochuan/Codes/MuyinWNet/FeatureExtractorTrained/20240928New/Ckpts/Style/ResNet50/BestExtractor.pth'
-                ]
+                ],
+        
+        # learning hypers
+        'initLrD': 0.00002,
+        'initLrG': 0.00005
 
 
 }
@@ -69,18 +62,12 @@ penalties = {
         'PenaltyReconstructionL1':3,
         'PenaltyConstContent':0.2,
         'PenaltyConstStyle':0.2,
-        'PenaltyAdversarial': 0,
         'PenaltyDiscriminatorCategory': 0,
         'GeneratorCategoricalPenalty': 0.,
-        'PenaltyDiscriminatorGradient': 0,
-        'Batch_StyleFeature_Discrimination_Penalty':0,
         'vaePenalty': 1,        
- 
-        
-        
         'PenaltyContentFeatureExtractor': [1,1,1,1,1,1,1],
         'PenaltyStyleFeatureExtractor':[1,1,1,1,1,1,1],
-        'adversarialPenalty':1,
+        'adversarialPenalty':0.7,
         'gradientPenalty':10
         
 }

@@ -65,22 +65,24 @@ class UserInterfaceObj(object):
 
 # Training parameters such as optimizer type, batch size, learning rate, etc.
 class TrainParamObject(object):
-    def __init__(self, args, seed, optimizer, gradientNorm, initTrainEpochs, debugMode):
+    def __init__(self, args, initLrG, initLrD, optimizer, gradientNorm, debugMode):
         self.optimizer = optimizer  # Type of optimizer to use (e.g., Adam, SGD)
-        self.initTrainEpochs = initTrainEpochs  # Number of initial training epochs
+        # self.initTrainEpochs = initTrainEpochs  # Number of initial training epochs
         self.gradientNorm = gradientNorm  # Whether to use gradient normalization
         self.epochs = args.epochs  # Total number of training epochs
         self.batchSize = args.batchSize  # Batch size for training
-        self.initLr = args.initLr  # Initial learning rate
+        self.initLrG = initLrG # Initial learning rate
+        self.initLrD = initLrD # Initial learning rate
         self.debugMode = debugMode  # Whether to run in debug mode
-        self.seed = seed  # Seed for random number generators to ensure reproducibility
+        # self.seed = seed  # Seed for random number generators to ensure reproducibility
 
 
 # Main parameter setting object that handles experiment configuration
 class ParameterSetting(object):
-    def __init__(self, config, args):
+    def __init__(self, config, args, seed):
         self.config = config
         self.config.debug = args.debug  # Whether debug mode is enabled
+        self.config.seed=seed
 
         # Identify available CPU and GPU devices
         avalialbe_cpu, available_gpu = self.FindAvailableDevices()
@@ -116,8 +118,7 @@ class ParameterSetting(object):
         # Set generator and discriminator networks
         self.config.generator = NetworkConfigObject(name=self.config.expID,
                                                     path=os.path.join(self.config.userInterface.expDir, 'Generator'))
-        self.config.discriminator = NetworkConfigObject(name=self.config.discriminator, 
-                                                        path=os.path.join(self.config.userInterface.expDir, 'Discriminator'))
+        
 
         # Configure feature extractors if paths are specified
         if self.config.TrueFakeExtractorPath:
@@ -139,7 +140,7 @@ class ParameterSetting(object):
         # Load dataset configuration and paths
         dataRootPath = importlib.import_module('.' + args.config, package='Configurations').dataPathRoot
         self.config.datasetConfig = DatasetConfigObject(augmentation=self.config.augmentation,
-                                                        inputStyleNum=self.config.inputStyleNum, 
+                                                        inputStyleNum=args.inputStyleNum, 
                                                         inputContentNum=self.config.inputContentNum,
                                                         imgWidth=self.config.imgWidth,
                                                         channels=self.config.channels,
@@ -150,7 +151,6 @@ class ParameterSetting(object):
         
         # Remove unnecessary dataset configuration attributes
         self.config.pop('YamlPackage', None)
-        self.config.pop('inputStyleNum', None)
         self.config.pop('imgWidth', None)
         self.config.pop('channels', None)
         self.config.pop('label1VecTxt', None)
@@ -158,18 +158,18 @@ class ParameterSetting(object):
 
         # Set training parameters
         self.config.trainParams = TrainParamObject(args=args, 
-                                                   seed=self.config.seed,
+                                                   initLrG=self.config.initLrG,
+                                                   initLrD=self.config.initLrD,
                                                    optimizer=self.config.optimizer, 
                                                    gradientNorm=self.config.gradNorm,
-                                                   initTrainEpochs=self.config.initTrainEpochs,
                                                    debugMode=self.config.debugMode)
         
         # Remove unnecessary training parameter attributes
         self.config.pop('optimizer', None)
-        self.config.pop('initTrainEpochs', None)
         self.config.pop('debugMode', None)
-        self.config.pop('seed', None)
         self.config.pop('gradNorm', None)
+        self.config.pop('initLrG', None)
+        self.config.pop('initLrD', None)
 
     # Method to process a list of network paths and create NetworkConfigObjects
     def ProcessNetworks(self, models):
@@ -222,12 +222,10 @@ class ParameterSetting(object):
 
         id = "DefaultExpID"#默认值
 
-        if wnet == 'general':
-            id = "GNR-%s-%s-%s" % (self.config.expID, encoder, mixer)
+        if 'General' in wnet:
+            id = "GNR%s-%s-%s-%s" % (wnet.split('-')[-1], self.config.expID, encoder, mixer)
             if decoder is not None:
                 id = id + "-%s" % decoder
-        elif wnet == 'plain':
+        elif 'Plain' in wnet:
             id = "PLN-%s-%s" % (self.config.expID, mixer)
-        if not self.config.discriminator == 'NA':
-            id = id + "-%s" % self.config.discriminator
         return id

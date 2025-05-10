@@ -33,7 +33,7 @@ You can train the model using the following commands based on your requirements:
 
 ```bash
 cd Scripts
-python TrainWnetScript.py --wnet plain --mixer MixerMaxRes3@3 --batchSize 64 --initLr 0.001 --epochs 11 --resumeTrain 1 --config PF64-PF50 --device 0
+python TrainWnetScript.py --wnet Plain --mixer MixerMaxRes3@3 --batchSize 64 --inputStyleNum 5 --epochs 35 --resumeTrain 1 --config PF64-HW50-Batch816 --device 0
 ```
 
 

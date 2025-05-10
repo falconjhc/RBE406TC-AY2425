@@ -2,7 +2,7 @@ import os
 import random
 import sys
 import torch
-import torchvision.transforms.functional as F
+# import torchvision.transforms.functional as F
 
 # Suppress warnings and TensorFlow32
 #torch.set_warn_always(False)
@@ -17,16 +17,18 @@ import yaml
 import cv2
 from time import time
 sys.path.append('./')
-from Utilities.utils import set_random, cv2torch, read_file_to_dict
+from Utilities.utils import cv2torch, read_file_to_dict
 import time
 from tqdm import tqdm
 displayInterval = 25
-from torchvision.transforms import InterpolationMode
+# from torchvision.transforms import InterpolationMode
 from PIL import Image
 import numpy as np
 from Utilities.utils import PrintInfoLog
 from Utilities.utils import MergeAllDictKeys
 import glob
+import torchvision.transforms.functional as F
+
 
 
 def RotationAugmentationToChannels(img, config, fill=1, style=False):
@@ -108,6 +110,7 @@ def TranslationAugmentationToChannels(img, config, fill=1, style=False):
     # Stack all channels back together
     transformed_image = torch.cat(transformed_channels, dim=0)
     return transformed_image
+
 
 
 # Basic transformation for converting numpy arrays to PyTorch tensors
@@ -255,11 +258,7 @@ class CharacterDataset(Dataset):
         if is_train:
             self.gtYaml = [ii for ii in filesIdentified if 'TrainGroundTruth' in ii]
             self.styleYaml = [ii for ii in filesIdentified if 'TrainStyleReference' in ii]
-            # self.gtYaml = os.path.join(config.datasetConfig.yamls, 'TrainGroundTruth.yaml')
-            # self.styleYaml = os.path.join(config.datasetConfig.yamls, 'TrainStyleReference.yaml')
         else:
-            # self.gtYaml = os.path.join(config.datasetConfig.yamls, 'TestGroundTruth.yaml')
-            # self.styleYaml = os.path.join(config.datasetConfig.yamls, 'TestStyleReference.yaml')
             self.gtYaml = [ii for ii in filesIdentified if 'TestGroundTruth' in ii]
             self.styleYaml = [ii for ii in filesIdentified if 'TestStyleReference' in ii]
 
@@ -268,7 +267,6 @@ class CharacterDataset(Dataset):
         # Load the number of content and style inputs
         self.input_content_num = config.datasetConfig.inputContentNum
         self.input_style_num = config.datasetConfig.inputStyleNum
-        set_random()
 
         strat_time = time.time()  # Start timer to measure data loading time
         self.gtDataList = self.CreateDataList(self.gtYaml)  # Load the ground truth data
@@ -297,8 +295,10 @@ class CharacterDataset(Dataset):
         # Prepare content and style lists for each data point
         styleFiles = styleFileDict  # assign for compatibility with the original variable name
         for idx, (_, label0, label1) in tqdm(enumerate(self.gtDataList), total=len(self.gtDataList), desc="Loading: "):
+            
             # contentFiles[label0] should already be a flat list — no need to reassign
             self.contentList.append(contentFiles[label0])
+            
             # flatten list-of-lists from styleFiles[label1] on the fly
             flat_style_list = []
             for group in styleFiles[label1]:
@@ -309,27 +309,20 @@ class CharacterDataset(Dataset):
             self.styleListFull.append(flat_style_list)
             # self.styleList.append(random.sample(flat_style_list, self.input_style_num))
     
-        if not is_train:
-            PrintInfoLog(self.sessionLog, "Reordering by label0 (content labels) ...", end='\r')
-            sortedListLabel0 = sorted(range(len(listLabel0)), key=lambda i: listLabel0[i])
-            self.gtDataList = [self.gtDataList[i] for i in sortedListLabel0]
-            self.contentList = [self.contentList[i] for i in sortedListLabel0]
-            self.styleListFull = [self.styleListFull[i] for i in sortedListLabel0]
-            PrintInfoLog(self.sessionLog, "Reordering by label0 (content labels) completed.")
+        # if not is_train:
+        PrintInfoLog(self.sessionLog, "Reordering by label0 (content labels) ...", end='\r')
+        sortedListLabel0 = sorted(range(len(listLabel0)), key=lambda i: listLabel0[i])
+        self.gtDataList = [self.gtDataList[i] for i in sortedListLabel0]
+        self.contentList = [self.contentList[i] for i in sortedListLabel0]
+        self.styleListFull = [self.styleListFull[i] for i in sortedListLabel0]
+        PrintInfoLog(self.sessionLog, "Reordering by label0 (content labels) completed.")
 
-            
-        
         # Initialize labels and one-hot encoding vectors
         self.label0order = config.datasetConfig.loadedLabel0Vec
                 # One-hot encoding for content and style labels
         self.label1order = config.datasetConfig.loadedLabel1Vec
         self.onehotContent, self.onehotStyle = [0 for _ in range(len(self.label0order))], [0 for _ in range(len(self.label1order))]
 
-        # Set data augmentation mode based on training or testing
-        if self.is_train:
-            self.ResetTrainAugment('NONE')
-        else:
-            self.augment = transformTest
         
         end_time = time.time()  # Measure the end time for data loading
         PrintInfoLog(self.sessionLog, f'dataset cost:{(end_time - strat_time):.2f}s')
@@ -346,7 +339,7 @@ class CharacterDataset(Dataset):
             (random.sample(styles, K) if len(styles) >= K else random.choices(styles, k=K))
             for styles in full
         ]
-        PrintInfoLog(self.sessionLog, "Reset " + mark + " StyleList at Epoch: %d " % epoch + ' completed.')
+        PrintInfoLog(self.sessionLog, "Reset " + mark + " StyleList at Epoch: %d " % epoch + 'completed.')
 
     def __getitem__(self, index):
         """
@@ -380,12 +373,7 @@ class CharacterDataset(Dataset):
 
         # Load and process style tensors
         currentStyleNum=len(self.styleList[index])
-        
-        # currentStyleSampled = self.styleList[index][sa
-
         tensorStyle = (torch.cat([cv2torch(reference_style, self.augment['style']) for reference_style in self.styleList[index]], dim=0) - 0.5) * 2
-        # sampled = random.sample(range(currentStyleNum), self.input_style_num)
-        # tensorStyle = tensorStyle[sampled,:,:]
         perm = torch.randperm(currentStyleNum, device=tensorStyle.device)[:self.input_style_num]
         tensorStyle = torch.index_select(tensorStyle, 0, perm)
         tensorStyle = RotationAugmentationToChannels(tensorStyle, self.augment['rotationTranslation'], style=True)
@@ -437,19 +425,4 @@ class CharacterDataset(Dataset):
                 data_list.append((path, label0, label1))
         return data_list
 
-    def ResetTrainAugment(self, info):
-        """
-        Set the data augmentation mode for training.
-        
-        Args:
-            info (str): Augmentation mode ('START', 'INITIAL', 'FULL', 'NONE').
-        """
-        if info == 'START':
-            self.augment = transformTrainMinor
-        elif info == 'INITIAL':
-            self.augment = transformTrainHalf
-        elif info == 'FULL':
-            self.augment = transformTrainFull
-        elif info == 'NONE':
-            self.augment = None
-        PrintInfoLog(self.sessionLog, "Switch to data augmentation %s mode" % info)
+    

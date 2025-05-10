@@ -184,14 +184,14 @@ def cv2torch(file_path,transform):
 def string2tensor(string):
     return torch.tensor(int(string))
 
-def set_random(seed_id=1234):
-    #set random seed for reproduce
-    random.seed(seed_id)
-    np.random.seed(seed_id)
-    torch.manual_seed(seed_id)   #for cpu
-    torch.cuda.manual_seed_all(seed_id) #for GPU
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
+# def set_random(seed_id=1234):
+#     #set random seed for reproduce
+#     random.seed(seed_id)
+#     np.random.seed(seed_id)
+#     torch.manual_seed(seed_id)   #for cpu
+#     torch.cuda.manual_seed_all(seed_id) #for GPU
+#     torch.backends.cudnn.deterministic = True
+#     torch.backends.cudnn.benchmark = True
 
 def read_file_to_dict(file_path):
     line_dict = {}

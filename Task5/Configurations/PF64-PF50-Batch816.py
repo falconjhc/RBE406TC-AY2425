@@ -3,14 +3,10 @@ dataPathRoot = '/data0/haochuan/'
 
 
 hyperParams = {
-        'seed':1,
         'debugMode':1,
-        'expID':'20250503PF-VAE',# experiment name prefix
-        'expDir': '/data-shared/server01/data1/haochuan/CharacterRecords2025May-03/',
+        'expID':'20250509PF-Batch816',# experiment name prefix
+        'expDir': '/data-shared/server01/data1/haochuan/CharacterRecords2025May-051/',
         
-        # user interface
-        'printInfoSeconds':3,
-
         'YamlPackage': '../YamlLists/PF64-PF80/',
         
         'FullLabel0Vec': '/data-shared/server09/data0/haochuan/CASIA_Dataset/LabelVecs/PF64-Label0.txt',
@@ -19,13 +15,9 @@ hyperParams = {
         
         # training configurations
         'augmentation':'HardAugmentationSchecule', 
-        # Options: ‘NoAugmentation’, 'SimpleAugmentation', 'HardAumentation', 'SimpleAugmentationSchecule', 'HardAugmentationSchecule'
+        # Options: 'NoAugmentation', 'SimpleAugmentation', 'HardAumentation', 'SimpleAugmentationSchecule', 'HardAugmentationSchecule'
         
-        'inputStyleNum':5, 
         'inputContentNum':64,
-
-        'discriminator':'NA',
-
 
         # input params
         'imgWidth':64,
@@ -34,16 +26,12 @@ hyperParams = {
         # optimizer setting
         'optimizer':'adam',
         'gradNorm': 1,
-        'initTrainEpochs':0,
-        'final_learning_rate_pctg':0.01,
 
         # feature extractor parametrers
         'TrueFakeExtractorPath': [],
         'ContentExtractorPath':[
                 '/data-shared/server09/data1/haochuan/Codes/MuyinWNet/FeatureExtractorTrained/20240928New/Ckpts/Content/VGG11Net/BestExtractor.pth',
                 '/data-shared/server09/data1/haochuan/Codes/MuyinWNet/FeatureExtractorTrained/20240928New/Ckpts/Content/VGG13Net/BestExtractor.pth',
-                '/data-shared/server09/data1/haochuan/Codes/MuyinWNet/FeatureExtractorTrained/20240928New/Ckpts/Content/VGG16Net/BestExtractor.pth',
-                '/data-shared/server09/data1/haochuan/Codes/MuyinWNet/FeatureExtractorTrained/20240928New/Ckpts/Content/VGG19Net/BestExtractor.pth',
                 '/data-shared/server09/data1/haochuan/Codes/MuyinWNet/FeatureExtractorTrained/20240928New/Ckpts/Content/ResNet18/BestExtractor.pth',
                 '/data-shared/server09/data1/haochuan/Codes/MuyinWNet/FeatureExtractorTrained/20240928New/Ckpts/Content/ResNet34/BestExtractor.pth',
                 '/data-shared/server09/data1/haochuan/Codes/MuyinWNet/FeatureExtractorTrained/20240928New/Ckpts/Content/ResNet50/BestExtractor.pth'
@@ -52,12 +40,15 @@ hyperParams = {
         'StyleExtractorPath':  [
                 '/data-shared/server09/data1/haochuan/Codes/MuyinWNet/FeatureExtractorTrained/20240928New/Ckpts/Style/VGG11Net/BestExtractor.pth',
                 '/data-shared/server09/data1/haochuan/Codes/MuyinWNet/FeatureExtractorTrained/20240928New/Ckpts/Style/VGG13Net/BestExtractor.pth',
-                '/data-shared/server09/data1/haochuan/Codes/MuyinWNet/FeatureExtractorTrained/20240928New/Ckpts/Style/VGG16Net/BestExtractor.pth',
-                '/data-shared/server09/data1/haochuan/Codes/MuyinWNet/FeatureExtractorTrained/20240928New/Ckpts/Style/VGG19Net/BestExtractor.pth',
                 '/data-shared/server09/data1/haochuan/Codes/MuyinWNet/FeatureExtractorTrained/20240928New/Ckpts/Style/ResNet18/BestExtractor.pth',
                 '/data-shared/server09/data1/haochuan/Codes/MuyinWNet/FeatureExtractorTrained/20240928New/Ckpts/Style/ResNet34/BestExtractor.pth',
                 '/data-shared/server09/data1/haochuan/Codes/MuyinWNet/FeatureExtractorTrained/20240928New/Ckpts/Style/ResNet50/BestExtractor.pth'
-                ]
+                ],
+        
+        # learning hypers
+        'initLrD': 0.00003,
+        'initLrG': 0.00007,
+
 
 }
 
@@ -68,17 +59,13 @@ penalties = {
         'PenaltyReconstructionL1':3,
         'PenaltyConstContent':0.2,
         'PenaltyConstStyle':0.2,
-        'PenaltyAdversarial': 0,
         'PenaltyDiscriminatorCategory': 0,
         'GeneratorCategoricalPenalty': 0.,
-        'PenaltyDiscriminatorGradient': 0,
-        'Batch_StyleFeature_Discrimination_Penalty':0,
         'vaePenalty': 1,        
- 
-        'PenaltyContentFeatureExtractor': [1,1,1,1,1,1,1],
-        'PenaltyStyleFeatureExtractor':[1,1,1,1,1,1,1],
-        'gradientPenalty':0.0,
-        'adversarialPenalty':0.0
+        'PenaltyContentFeatureExtractor': [1,1,1,1,1],
+        'PenaltyStyleFeatureExtractor':[1,1,1,1,1],
+        'adversarialPenalty':1,
+        'gradientPenalty':10
         
 }
 

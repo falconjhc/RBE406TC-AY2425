@@ -33,6 +33,9 @@ import torchvision.transforms as transforms
 from PIL import Image
 from datetime import datetime
 
+from torch.cuda.amp import autocast, GradScaler
+# scaler = GradScaler()
+
 
 # Constants for model training
 DISP_CONTENT_STYLE_NUM = 5  # Maximum number of content/style images to display during summary writing
@@ -45,22 +48,24 @@ eps = 1e-9  # Small value to avoid division by zero in calculations
 
 INITIAL_TRAIN_EPOCHS = 7  # Epoch threshold for transitioning augmentation methods
 START_TRAIN_EPOCHS = 3  # Epoch after which simple augmentations start
-N_CRITIC = 5
 
 
 sys.path.append('./')
 from Pipelines.Dataset import CharacterDataset
-from Utilities.utils import set_random
-from Networks.PlainGenerators.PlainWNetBase import WNetGenerator as WNetGenerator
+from Networks.Discriminator import Critic 
+from Networks.PlainGenerators.PlainWNetBase import WNetGenerator as PlainWnet
 from LossAccuracyEntropy.Loss import Loss
 from Utilities.utils import Logging, PrintInfoLog
 from Utilities.utils import SplitName
 
+from Pipelines.Dataset import transformTrainZero, transformTrainMinor, transformTrainHalf, transformTrainFull, transformTest
+
+N_CRITIC = 5
 WARMUP_EPOCS = 1
 RAMP_EPOCHS = 5
 
 # WNetDict contains two variations of the WNetGenerator model, selecting based on configuration
-# WNetDict = {'general': GeneralizedWNet, 'plain': PlainWnet}
+
 
 # Define data augmentation modes for various stages of training
 DataAugmentationMode = {
@@ -95,6 +100,13 @@ class ThresholdScheduler:
         return self.threshold
 
 
+def SetWorker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
+
+
 class Trainer(nn.Module):
     """
     Trainer class responsible for managing the entire training process, including data loading,
@@ -102,6 +114,8 @@ class Trainer(nn.Module):
     """
     def __init__(self, hyperParams=-1, penalties=-1):
         super().__init__()
+        
+        self.separator = "########################################################################################################"
 
         # Store hyperparameters and penalties
         self.config = hyperParams
@@ -143,18 +157,16 @@ class Trainer(nn.Module):
         # Data augmentation strategy based on the configuration
         self.augmentationApproach = DataAugmentationMode[self.config.datasetConfig.augmentation]
         self.debug = self.config.debug  # Flag to enable debug mode
-        set_random()  # Set random seed for reproducibility
 
         self.iters = 0  # Initialize iteration counter
         self.startEpoch = 0  # Initialize starting epoch
 
         # Model initialization: select the appropriate WNetGenerator model based on configuration
-        self.generator = WNetGenerator(self.config, self.sessionLog)
+        self.generator = PlainWnet(self.config, self.sessionLog)
         self.generator.train()  # Set the model to training mode
         self.generator.cuda()  # Move the model to GPU
         
         
-
         # Apply Xavier initialization to layers (Conv2D and Linear)
         for m in self.generator.modules():
             if isinstance(m, (nn.Conv2d)):
@@ -168,15 +180,18 @@ class Trainer(nn.Module):
             elif isinstance(m, nn.BatchNorm2d):
                 m.weight.data.fill_(1)  # Set weights to 1 for BatchNorm layers
                 m.bias.data.zero_()  # Set biases to 0 for BatchNorm layers
+            elif isinstance(m, nn.InstanceNorm2d):
+                m.weight.data.fill_(1)  # Set weights to 1 for InstanceNorm layers
+                m.bias.data.zero_()    # Set biases to 0 for InstanceNorm layers
 
         # Optimizer selection based on the config (Adam, SGD, or RMSprop)
         if self.config.trainParams.optimizer == 'adam':
-            self.optimizerG = torch.optim.Adam(self.generator.parameters(), lr=self.config.trainParams.initLr, betas=(0.0, 0.9),
+            self.optimizerG = torch.optim.Adam(self.generator.parameters(), lr=self.config.trainParams.initLrG, betas=(0.0, 0.9),
                                               weight_decay=self.penalties.PenaltyGeneratorWeightRegularizer)
         elif self.config.trainParams.optimizer == 'sgd':
-            self.optimizerG = torch.optim.SGD(self.generator.parameters(), lr=self.config.trainParams.initLr, momentum=0.9)
+            self.optimizerG = torch.optim.SGD(self.generator.parameters(), lr=self.config.trainParams.initLrG, momentum=0.9)
         elif self.config.trainParams.optimizer == 'rms':
-            self.optimizerG = torch.optim.RMSprop(self.generator.parameters(), lr=self.config.trainParams.initLr,
+            self.optimizerG = torch.optim.RMSprop(self.generator.parameters(), lr=self.config.trainParams.initLrG,
                                                  alpha=0.99, eps=1e-08,
                                                  weight_decay=self.penalties.PenaltyGeneratorWeightRegularizer)
             
@@ -185,31 +200,24 @@ class Trainer(nn.Module):
         self.sumLoss = Loss(self.config, self.sessionLog, self.penalties, [WARMUP_EPOCS,RAMP_EPOCHS])
 
         # Set number of workers for loading data based on the debug mode
+        self.workerGenerator = torch.Generator()
+        self.workerGenerator.manual_seed(self.config.seed)
         if not self.debug:
-            workersNum = multiprocessing.cpu_count() // 3  # Use one-third of the available CPU cores
-            workersNum = 24
+            self.workersNum = 24
         else:
-            workersNum = 1  # No multiprocessing in debug mode
+            self.workersNum = 1  # No multiprocessing in debug mode
+        
         # Log the number of threads used for reading data
-        PrintInfoLog(self.sessionLog, f"Reading Data: {workersNum}/{multiprocessing.cpu_count()} Threads")
+        PrintInfoLog(self.sessionLog, f"Reading Data: {self.workersNum}/{multiprocessing.cpu_count()} Threads")
 
         # Initialize training and testing datasets and data loaders
         self.trainset = CharacterDataset(self.config, sessionLog=self.sessionLog)
-        self.trainLoader = DataLoader(self.trainset, batch_size=self.config.trainParams.batchSize,
-                                      num_workers=workersNum, pin_memory=True, 
-                                      shuffle=True, drop_last=False, 
-                                      persistent_workers=True)
-
         self.testSet = CharacterDataset(self.config, sessionLog=logging.info, is_train=False)
-        self.testLoader = DataLoader(self.testSet, batch_size=self.config.trainParams.batchSize,
-                                     num_workers=workersNum, pin_memory=True, 
-                                     shuffle=False, drop_last=False, 
-                                     persistent_workers=True)
+        
 
         # Learning rate scheduler with exponential decay
         lrGamma = np.power(0.01, 1.0 / (self.config.trainParams.epochs - 1))
         self.lrScheculerG = torch.optim.lr_scheduler.ExponentialLR(gamma=lrGamma, optimizer=self.optimizerG)
-        # self.lrScheculerD = torch.optim.lr_scheduler.ExponentialLR(gamma=lrGamma, optimizer=self.optimizerD)
 
         # Gradient norm scheduler
         gradNormGamma = np.power(0.75, 1.0 / (self.config.trainParams.epochs - 1))
@@ -226,11 +234,6 @@ class Trainer(nn.Module):
             self.generator.load_state_dict(ckptG['stateDict'])  # Load the model weights
             self.optimizerG.load_state_dict(ckptG['optimizer'])  # Load the optimizer state
             
-            # for discriminator 
-            listFiles = glob.glob(self.config.userInterface.expDir+'/Discriminator' + '/*.pth')
-            latestFile = max(listFiles, key=os.path.getctime)  # Get the latest checkpoint file
-            ckptD = torch.load(latestFile)  # Load the checkpoint
-            
             # for framework
             listFiles = glob.glob(self.config.userInterface.expDir+'/Frameworks' + '/*.pth')
             latestFile = max(listFiles, key=os.path.getctime)  # Get the latest checkpoint file
@@ -241,10 +244,10 @@ class Trainer(nn.Module):
 
             # Reset learning rate after loading
             for param_group in self.optimizerG.param_groups:
-                param_group['lr'] = self.config.trainParams.initLr
+                param_group['lr'] = self.config.trainParams.initLrG
                 
             for param_group in self.optimizerD.param_groups:
-                param_group['lr'] = self.config.trainParams.initLr
+                param_group['lr'] = self.config.trainParams.initLrD
 
             # Apply the learning rate and gradient schedulers up to the start epoch
             for _ in range(self.startEpoch):
@@ -254,6 +257,7 @@ class Trainer(nn.Module):
 
         # Initialize a dictionary to record gradient values
         self.gradG = {}
+        self.gradD = {}
 
         class _gradient():
             def __init__(self):
@@ -269,8 +273,6 @@ class Trainer(nn.Module):
                 self.gradG[subName].update({layerName: _gradient()})
             self.gradG[subName][layerName].count = self.gradG[subName][layerName].count + 1
 
-        
-
         # Log that the trainer is ready
         PrintInfoLog(self.sessionLog, 'Trainer prepared.')
 
@@ -279,6 +281,10 @@ class Trainer(nn.Module):
         for idx1, (subName, subDict) in enumerate(self.gradG.items()):
             for idx2, (key, value) in enumerate(self.gradG[subName].items()):
                 self.gradG[subName][key].value = 0.0
+                
+        for idx1, (subName, subDict) in enumerate(self.gradD.items()):
+            for idx2, (key, value) in enumerate(self.gradD[subName].items()):
+                self.gradD[subName][key].value = 0.0
 
     def SummaryWriting(self, evalContents, evalStyles, evalGTs, evalFakes, epoch, step, 
                        lossG, lossDict, mark='NA', writeImageToDisk=False):
@@ -327,13 +333,13 @@ class Trainer(nn.Module):
 
         # Write images to TensorBoard and disk
         if mark == 'Train':
-            self.writer.add_image("TrainImage", output, dataformats='CHW', global_step=step)
-        elif mark == 'Test':
-            self.writer.add_image("TestImage", output, dataformats='CHW', global_step=step)
+            self.writer.add_image("Image in Train", output, dataformats='CHW', global_step=step)
+        elif 'Veryfing@' in mark:
+            self.writer.add_image("Image in %s" % mark, output, dataformats='CHW', global_step=step)
         
         # Save Grid Image to Disk 
         if writeImageToDisk: 
-            outImg.save(os.path.join(self.config.userInterface.trainImageDir, "%sEpoch%d.png" % (mark, epoch)))
+            outImg.save(os.path.join(self.config.userInterface.trainImageDir, "%s-Epoch%d.png" % (mark, epoch)))
 
 
         # Write scalar losses to TensorBoard
@@ -349,12 +355,8 @@ class Trainer(nn.Module):
         self.writer.add_scalar('01-LossGenerator/CategoryFakeStyle-' + mark, lossDict['lossCategoryStyleFake'], global_step=step)
         self.writer.add_scalar('01-LossReconstruction/DeepPerceptualContentSum-' + mark, lossDict['deepPerceptualContent'], global_step=step)
         self.writer.add_scalar('01-LossReconstruction/DeepPerceptualStyleSum-' + mark, lossDict['deepPerceptualStyle'], global_step=step)
+                
         
-        # 记录 KL Loss（如果存在）
-        if 'kl_loss' in lossDict:
-            for ii in range(len(lossDict['kl_loss'])):
-                self.writer.add_scalar('02-LossKL/KL%d'% (ii+1) + '-' + mark , lossDict['kl_loss'][ii], global_step=step)
-            
         if mark == 'Train':
             # Clear previous gradient records
             self.ClearGradRecords()
@@ -362,16 +364,19 @@ class Trainer(nn.Module):
                 if param.grad is not None:
                     subName, layerName = name.split('.')[0], name.split('.')[1]
                     self.gradG[subName][layerName].value = self.gradG[subName][layerName].value + torch.norm(param.grad)
+                    
 
             # Log gradient norms to TensorBoard
-            self.writer.add_scalar('00-GradientCheck/00-MinGradThreshold', self.gradGNormScheduler.GetThreshold(), global_step=step)
-            self.writer.add_scalar('00-GradientCheck/00-LearningRate', self.lrScheculerG.get_lr()[0], global_step=step)
+            self.writer.add_scalar('00-GradientCheck-G/00-MinGradThreshold', self.gradGNormScheduler.GetThreshold(), global_step=step)
+            self.writer.add_scalar('00-GradientCheck-D/00-MinGradThreshold', self.gradGNormScheduler.GetThreshold(), global_step=step)
+            self.writer.add_scalar('00-GradientCheck-G/00-LearningRate-G', self.lrScheculerG.get_lr()[0], global_step=step)
             for idx1, (subName, subDict) in enumerate(self.gradG.items()):
                 for idx2, (layerName, value) in enumerate(self.gradG[subName].items()):
                     currentName = subName + '-' + layerName
-                    self.writer.add_scalar('00-GradientCheck/' + currentName, 
+                    self.writer.add_scalar('00-GradientCheck-G/' + currentName, 
                                            self.gradG[subName][layerName].value / self.gradG[subName][layerName].count * self.lrScheculerG.get_lr()[0], 
                                            global_step=step)
+                    
             
 
         # Log deep perceptual loss if extractors are used
@@ -389,18 +394,27 @@ class Trainer(nn.Module):
         self.writer.flush()
         
     def TrainOneEpoch(self, epoch):
-        # reset stylelist
-        self.trainset.ResetStyleList(epoch+1,"Train")
-        
+        # Reset the data augmentation if resuming training from an early epoch
+        if epoch < START_TRAIN_EPOCHS:
+            self.trainset, self.trainLoader = self.ResetDataLoader(epoch = epoch+1, thisSet=self.trainset, 
+                                                                   info=self.augmentationApproach[0], 
+                                                                   mark="TrainingSet",  isTrain=True)
+        elif epoch < INITIAL_TRAIN_EPOCHS:
+            self.trainset, self.trainLoader = self.ResetDataLoader(epoch = epoch+1,  thisSet=self.trainset, 
+                                                                   info=self.augmentationApproach[1], 
+                                                                   mark="TrainingSet",  isTrain=True)
+        else:
+            self.trainset, self.trainLoader = self.ResetDataLoader(epoch = epoch+1, thisSet=self.trainset, 
+                                                                   info=self.augmentationApproach[2], 
+                                                                   mark="TrainingSet",  isTrain=True)
+
         
         # torch.autograd.set_detect_anomaly(True)
         """Train the model for a single epoch."""
         self.generator.train()  # Set the model to training mode
-        # self.discriminator.train()
         time1 = time()  # Track start time for the epoch
         thisRoundStartItr = 0  # Used to track when to write summaries
         
-                
         
         trainProgress = tqdm(enumerate(self.trainLoader), total=len(self.trainLoader),
                              desc="Training @ Epoch %d" % (epoch+1))  # Progress bar for the training epoch
@@ -412,6 +426,7 @@ class Trainer(nn.Module):
                 onehotContent.cuda().requires_grad_(), onehotStyle.cuda().requires_grad_()
             reshapedStyle = styles.reshape(-1, 1, 64, 64)
 
+            
             # Forward pass: generate content and style features, categories, and final output (fake images)
             encodedContentFeatures, encodedStyleFeatures, encodedContentCategory, encodedStyleCategory, generated, vae = \
                 self.generator(contents, reshapedStyle, gt)
@@ -423,13 +438,15 @@ class Trainer(nn.Module):
                           'encodedContents':[encodedContentFeatures,encodedContentCategory],
                           'encodedStyles':[encodedStyleFeatures,encodedStyleCategory],
                           'oneHotLabels':[onehotContent, onehotStyle]}
+            if vae != -1:
+                    lossInputs.update({'vae': vae})
 
+            # with autocast():
             # Compute the total generator loss and detailed loss breakdown
             sumLossG, Loss_dict = self.sumLoss(epoch, lossInputs, 
                                                          SplitName(self.config.generator.mixer)[1:-1],
-                                                        #  critic=self.discriminator,
                                                          mode='Train')
-            
+        
 
             # Update the progress bar with the current loss
             dispID = self.config.expID.replace('Exp','')
@@ -440,23 +457,28 @@ class Trainer(nn.Module):
                                           (epoch+1, self.config.trainParams.epochs, Loss_dict['lossL1']), refresh=True)
 
             
-            self.optimizerG.zero_grad()
-            sumLossG.backward()  # Compute gradients
+            if self.penalties.adversarialPenalty>eps and idx%N_CRITIC != (N_CRITIC-1) and epoch >= WARMUP_EPOCS:
+                self.optimizerD.zero_grad()
+                sumLossD.backward()  # Compute gradients
+                self.optimizerD.step()
+            else: 
+                self.optimizerG.zero_grad()
+                sumLossG.backward()  # Compute gradients
             
-        
-            # Gradient norm clipping and adjustment (if enabled)
-            if self.config.trainParams.gradientNorm:
-                torch.nn.utils.clip_grad_norm_(self.generator.parameters(), max_norm=MAX_gradNorm)  # Clip gradients
-                for name, param in self.generator.named_parameters():
-                    if param.grad is not None:
-                        gradNorm = torch.norm(param.grad)
-                        if gradNorm < self.gradGNormScheduler.GetThreshold():
-                            param.grad = param.grad + eps  # Prevent zero gradients by adding epsilon
-                            gradNorm = torch.norm(param.grad)  # Recompute gradient norm
-                            scaleFactor = self.gradGNormScheduler.GetThreshold() / (gradNorm + eps)  # Adjust scale factor
-                            param.grad = param.grad*scaleFactor  # Scale up the gradient
-            
-            self.optimizerG.step()  # Update model parameters
+                # Gradient norm clipping and adjustment (if enabled)
+                if self.config.trainParams.gradientNorm:
+                    torch.nn.utils.clip_grad_norm_(self.generator.parameters(), max_norm=MAX_gradNorm)  # Clip gradients
+                    for name, param in self.generator.named_parameters():
+                        if param.grad is not None:
+                            gradNorm = torch.norm(param.grad)
+                            if gradNorm < self.gradGNormScheduler.GetThreshold():
+                                param.grad = param.grad + eps  # Prevent zero gradients by adding epsilon
+                                gradNorm = torch.norm(param.grad)  # Recompute gradient norm
+                                scaleFactor = self.gradGNormScheduler.GetThreshold() / (gradNorm + eps)  # Adjust scale factor
+                                param.grad = param.grad*scaleFactor  # Scale up the gradient
+                
+                self.optimizerG.step()
+
             self.iters = self.iters+ 1  # Update iteration count
 
             # Log and write summaries at regular intervals
@@ -467,25 +489,32 @@ class Trainer(nn.Module):
                 thisRoundStartItr = idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader)
                 self.SummaryWriting(evalContents=contents, evalStyles=styles, evalGTs=gt, evalFakes=generated, epoch=epoch+1,
                                     step=epoch * NUM_SAMPLE_PER_EPOCH + int(idx / (len(self.trainLoader)) * NUM_SAMPLE_PER_EPOCH)+1,
-                                    lossG=sumLossG, lossDict=Loss_dict, mark='Train', writeImageToDisk=idx==len(self.trainLoader)-2)
+                                    lossG=sumLossG,  lossDict=Loss_dict, mark='Train', writeImageToDisk=idx==len(self.trainLoader)-2)
 
         time2 = time()  # Track end time for the epoch
         PrintInfoLog(self.sessionLog, 'Training completed @ Epoch: %d/%d training time: %f mins, L1Loss: %.3f' % 
                      (epoch+1, self.config.trainParams.epochs, (time2-time1)/60, Loss_dict['lossL1']))  # Log epoch time and loss
 
-    def TestOneEpoch(self, epoch):
+    def TestOneEpoch(self, epoch, thisSet, mark):
         
         # reset stylelist
-        self.testSet.ResetStyleList(epoch+1, "Test")
+        # thisSet.ResetStyleList(epoch+1, mark)
+        # thisSet.ResetTrainAugment('ZERO', mark)
+        
+        thisSet, thisLoader = self.ResetDataLoader(epoch = epoch+1, 
+                                                   thisSet=thisSet, info='ZERO', 
+                                                   mark=mark, isTrain=False)
+        
+        
+        # thisSet, thisLoader = self.ResetDataLoader(thisSet=thisSet, thisLoader=thisLoader, info='Zero', mark=mark, isTrain=False)
         
         """Evaluate the model on the test dataset for a single epoch."""
         is_train = False  # Disable training mode for evaluation
         self.generator.eval()  # Set the model to evaluation mode
-        # self.discriminator.eval()
         time1 = time()  # Track start time
         with torch.no_grad():  # Disable gradient calculations for efficiency
             thisRoundStartItr = 0
-            testProgress = tqdm(enumerate(self.testLoader), total=len(self.testLoader), desc="Testing @ Epoch %d" % (epoch+1))
+            testProgress = tqdm(enumerate(thisLoader), total=len(thisLoader), desc="Verifying @ %s Epoch %d" % (mark, epoch+1))
             for idx, (contents, styles, gt, onehotContent, onehotStyle) in testProgress:
                 # Move data to the GPU
                 contents, styles, gt, onehotContent, onehotStyle = contents.cuda(), \
@@ -499,20 +528,21 @@ class Trainer(nn.Module):
                 encodedContentFeatures, encodedStyleFeatures, encodedContentCategory, encodedStyleCategory, generated, vae = \
                     self.generator(contents, reshaped_styles, gt, is_train=is_train)
 
-
                 # Prepare inputs for the loss function
                 lossInputs = {'InputContents': contents, 
-                            'InputStyles': reshaped_styles, 
-                            'GT': gt, 'fake':generated,
-                            'encodedContents':[encodedContentFeatures,encodedContentCategory],
-                            'encodedStyles':[encodedStyleFeatures,encodedStyleCategory],
-                            'oneHotLabels':[onehotContent, onehotStyle]}
+                              'InputStyles': reshaped_styles, 
+                              'GT': gt, 'fake':generated,
+                              'encodedContents':[encodedContentFeatures,encodedContentCategory],
+                              'encodedStyles':[encodedStyleFeatures,encodedStyleCategory],
+                              'oneHotLabels':[onehotContent, onehotStyle]}
+                if vae != -1:
+                    lossInputs.update({'vae': vae})
                 
                 
+                # with autocast():
                 sumLossG, Loss_dict = self.sumLoss(epoch, lossInputs,
                                                              SplitName(self.config.generator.mixer)[1:-1],
-                                                            #  critic=self.discriminator, 
-                                                             mode='Test')
+                                                             mode=mark)
 
                 
                 # Update progress bar with current loss
@@ -520,21 +550,22 @@ class Trainer(nn.Module):
                 dispID = dispID.replace('Encoder','E')
                 dispID = dispID.replace('Mixer','M')
                 dispID = dispID.replace('Decoder','D')
-                testProgress.set_description(dispID + " Testing @ Epoch: %d/%d, LossL1: %.3f" %
-                                             (epoch+1, self.config.trainParams.epochs, Loss_dict['lossL1']), refresh=True)
+                testProgress.set_description(dispID + " Verifying at %s @ Epoch: %d/%d, LossL1: %.3f" %
+                                             (mark, epoch+1, self.config.trainParams.epochs, Loss_dict['lossL1']), refresh=True)
 
                 # Write summaries at regular intervals
-                if (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.testLoader) - thisRoundStartItr > RECORD_PCTG and epoch < START_TRAIN_EPOCHS) or \
-                    (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.testLoader) - thisRoundStartItr > RECORD_PCTG*2) or \
-                    idx == 0 or idx == len(self.testLoader) - 1:
-                    thisRoundStartItr = idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.testLoader)
+                if (idx * float(NUM_SAMPLE_PER_EPOCH) / len(thisLoader) - thisRoundStartItr > RECORD_PCTG and epoch < START_TRAIN_EPOCHS) or \
+                    (idx * float(NUM_SAMPLE_PER_EPOCH) / len(thisLoader) - thisRoundStartItr > RECORD_PCTG*2) or \
+                    idx == 0 or idx == len(thisLoader) - 1:
+                    thisRoundStartItr = idx * float(NUM_SAMPLE_PER_EPOCH) / len(thisLoader)
                     self.SummaryWriting(evalContents=contents, evalStyles=styles, evalGTs=gt, evalFakes=generated,epoch=epoch+1,
-                                        step=epoch * NUM_SAMPLE_PER_EPOCH + int(idx / len(self.testLoader) * NUM_SAMPLE_PER_EPOCH)+1,
-                                        lossG=sumLossG, lossDict=Loss_dict, mark='Test', writeImageToDisk=idx==len(self.testLoader)-2)
+                                        step=epoch * NUM_SAMPLE_PER_EPOCH + int(idx / len(thisLoader) * NUM_SAMPLE_PER_EPOCH)+1,
+                                        lossG=sumLossG, lossDict=Loss_dict, 
+                                        mark='Veryfing@'+mark, writeImageToDisk=idx==len(thisLoader)-2)
 
         time2 = time()  # Track end time for the epoch
-        PrintInfoLog(self.sessionLog, 'Testing completed @ Epoch: %d/%d testing time: %f mins, L1Loss: %.3f' % 
-                     (epoch+1, self.config.trainParams.epochs, (time2-time1)/60, Loss_dict['lossL1']))  # Log epoch time and loss
+        PrintInfoLog(self.sessionLog, 'Verifying completed @ %s @ Epoch: %d/%d verifying time: %f mins, L1Loss: %.3f' % 
+                     (mark, epoch+1, self.config.trainParams.epochs, (time2-time1)/60, Loss_dict['lossL1']))  # Log epoch time and loss
 
     def Pipelines(self):
         """Main training and evaluation loop."""
@@ -542,17 +573,13 @@ class Trainer(nn.Module):
         training_epoch_list = range(self.startEpoch, self.config.trainParams.epochs, 1)  # List of epochs to train
 
         if (not self.config.userInterface.skipTest) and self.startEpoch != 0:
-            self.TestOneEpoch(self.startEpoch-1)  # Test at the start if not skipping
+            self.TestOneEpoch(self.startEpoch-1, thisSet=self.trainset, mark='TrainingSet')  # Test at the start if not skipping   
+            self.TestOneEpoch(self.startEpoch-1, thisSet=self.testSet,  mark='TestingSet')  # Test at the start if not skipping     
 
         for epoch in training_epoch_list:
-            # Reset the data augmentation if resuming training from an early epoch
-            if self.startEpoch < START_TRAIN_EPOCHS:
-                self.trainset.ResetTrainAugment(info=self.augmentationApproach[0])
-            elif self.startEpoch < INITIAL_TRAIN_EPOCHS:
-                self.trainset.ResetTrainAugment(info=self.augmentationApproach[1])
-            else:
-                self.trainset.ResetTrainAugment(info=self.augmentationApproach[2])
-
+            # Reset data augmentation strategies based on the epoch
+            PrintInfoLog(self.sessionLog, self.separator)
+            
             # Train and test model at each epoch
             self.TrainOneEpoch(epoch)
             if not self.config.userInterface.skipTest and\
@@ -560,14 +587,18 @@ class Trainer(nn.Module):
                     or (epoch < INITIAL_TRAIN_EPOCHS and epoch % 3 == 0) \
                     or (epoch % 5 == 0) \
                     or epoch == self.config.trainParams.epochs-1):
-                self.TestOneEpoch(epoch)
+                
+                self.TestOneEpoch(epoch, thisSet=self.testSet,mark='TestingSet')  
+            
+            if not self.config.userInterface.skipTest and (epoch==0 or epoch==self.config.trainParams.epochs-1 or (epoch+1)%5==0):
+                self.TestOneEpoch(epoch, thisSet=self.trainset, mark='TrainingSet')  
+                  
 
             # Save model checkpoint at the end of the epoch
             stateG = {'stateDict': self.generator.state_dict(),'optimizer': self.optimizerG.state_dict()}
             torch.save(stateG, self.config.userInterface.expDir+'/Generator' + '/CkptEpoch%d.pth' % (epoch+1))
             stateFramework = {'epoch': epoch+1}
             torch.save(stateFramework, self.config.userInterface.expDir+'/Frameworks' + '/CkptEpoch%d.pth' % (epoch+1))
-            
             
             logging.info(f'Trained model has been saved at Epoch {epoch+1}.')
 
@@ -581,3 +612,75 @@ class Trainer(nn.Module):
         self.writer.close()  # Close the TensorBoard writer
         logging.info('Training finished, tensorboardX writer closed')
         logging.info('Training total time: %f hours.' % training_time)
+
+    
+    def ResetDataLoader(self, epoch, thisSet, info, mark, isTrain):
+        """
+        Set the data augmentation mode for training.
+        
+        Args:
+            info (str): Augmentation mode ('START', 'INITIAL', 'FULL', 'NONE').
+        """
+        
+        def _biased_random_k(K, N):
+            """
+            从 1 到 min(K, N) 中选择一个整数 n，
+            小值更可能被选中。
+            """
+            max_choice = min(K, N)
+            # 生成反比例权重，例如 [1/1, 1/2, ..., 1/max_choice]
+            weights = [1 / (i + 1) for i in range(max_choice)]
+            # 使用权重进行带偏采样
+            n = random.choices(range(1, max_choice + 1), weights=weights, k=1)[0]
+            return n
+        
+        PrintInfoLog(self.sessionLog, "Reset " + mark + " StyleList and Switch Data Augmentation %s for %s at Epoch: %d ..." % (info, mark, epoch), end='\r')  
+        
+        
+        if info == 'START':
+            thisSet.augment = transformTrainMinor
+        elif info == 'INITIAL':
+            thisSet.augment = transformTrainHalf
+        elif info == 'FULL':
+            thisSet.augment = transformTrainFull
+        elif info =='ZERO':
+            thisSet.augment = transformTrainZero
+        elif info == 'NONE':
+            thisSet.augment = None
+            
+        
+        
+        full = thisSet.styleListFull  # 原始样本
+        K = self.config.datasetConfig.inputStyleNum  # 需要的采样数量
+
+        thisSet.styleList = []
+        for styles in full:
+            if len(styles) == 0:
+                thisSet.styleList.append([])  # 无可选项则为空
+                continue
+
+            # n = random.randint(1, min(K, len(styles)))  # 1 到 K 中的一个值，不能超过原有样本数
+            # sampled = random.sample(styles, n)  # 先采样 n 个不同的
+            
+            n = _biased_random_k(K, len(styles))
+            sampled = random.sample(styles, n)
+            
+            
+            
+
+            # 若不够 K，则从 sampled 中有放回采样补齐
+            if n < K:
+                extra = random.choices(sampled, k=K - n)
+                final = sampled + extra
+            else:
+                final = sampled  # 恰好 K 个或更多时直接返回
+
+            thisSet.styleList.append(final)
+        
+        thisLoader = DataLoader(thisSet, batch_size=self.config.trainParams.batchSize,
+                                num_workers=self.workersNum, pin_memory=True, 
+                                shuffle=(isTrain==True), drop_last=False, 
+                                persistent_workers=False, 
+                                worker_init_fn=SetWorker, generator=self.workerGenerator)
+        PrintInfoLog(self.sessionLog, "Reset StyleList and Switch Data Augmentation %s for %s at Epoch: %d completed." % (info, mark, epoch))  
+        return thisSet, thisLoader

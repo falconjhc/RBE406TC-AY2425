@@ -15,7 +15,6 @@ sys.path.append('./')
 from Networks.PlainGenerators.AvgMaxPoolMixer import WNetMixer
 from Networks.PlainGenerators.PlainWNetDecoder import Decoder
 from Networks.PlainGenerators.PlainWNetEncoder import Encoder
-from Utilities.utils import set_random, PrintInfoLog
 
 # Define dimensions for CNN and Vision Transformer (ViT) components
 cnnDim = 64
@@ -36,7 +35,6 @@ class WNetGenerator(nn.Module):
         # Set the training mode flag and config
         self.is_train = True
         self.config = config
-        set_random()  # Set random seed for reproducibility
 
         # Initialize content encoder with specific input channels and category length
         self.contentEncoder = Encoder(input_channels=self.config.datasetConfig.channels * self.config.datasetConfig.inputContentNum,

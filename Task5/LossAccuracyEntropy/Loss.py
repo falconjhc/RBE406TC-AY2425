@@ -20,9 +20,7 @@ MAX_gradNorm = 1.0
 MIN_gradNorm = 1e-1
 GP_LAMBDA = 10
 
-
 from Utilities.utils import PrintInfoLog
-
 import copy
 
 class Loss(nn.Module):
@@ -247,18 +245,19 @@ class Loss(nn.Module):
         lossL1, lossConstContentReal, lossConstStyleReal, lossConstContentFake, lossConstStyleFake, \
         lossCategoryContentReal, lossCategoryContentFake, lossCategoryStyleReal, lossCategoryStyleFake = losses
 
-        
+
+        # 计算其它损失
         deepPerceptualContentSum, deepPerceptualStyleSum, contentMSEList, styleMSEList = \
             self.FeatureExtractorLoss(GT=GT, imgFake=generated)
 
+        
         deepLossContent = sum([x * y for x, y in zip(contentMSEList, self.PenaltyContentFeatureExtractor)])/sum(self.PenaltyContentFeatureExtractor)
         deepLossStyle = sum([x * y for x, y in zip(styleMSEList, self.PenaltyStyleFeatureExtractor)])/sum(self.PenaltyContentFeatureExtractor)
-        
-        
+
         sumLossG = lossL1 * self.PenaltyReconstructionL1 + \
                 (lossConstContentReal + lossConstContentFake) * self.PenaltyConstContent + \
-                +deepLossContent+deepLossStyle+\
-                (lossConstStyleReal + lossConstStyleFake) * self.PenaltyConstStyle
+                (lossConstStyleReal + lossConstStyleFake) * self.PenaltyConstStyle + \
+                    +deepLossContent+deepLossStyle
                 
 
         lossDict = {'lossL1': lossL1,
@@ -274,7 +273,6 @@ class Loss(nn.Module):
                     'deepPerceptualStyle': deepPerceptualStyleSum,
                     'deepPerceptualContentList': contentMSEList,
                     'deepPerceptualStyleList': styleMSEList}
-
         return sumLossG, lossDict
 
     def calculate_kl_divergence(self, vaeMeans, vaeLogVars):
