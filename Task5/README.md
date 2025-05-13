@@ -63,3 +63,6 @@ Enjoy!
 ```bash
 Feel free to modify any part of it to better suit your needs!
 ```
+
+
+![Demo of GeneralizedWNet](Style-00075-TestingSet.gif)
