@@ -33,7 +33,7 @@ import torchvision.transforms as transforms
 from PIL import Image
 from datetime import datetime
 
-from torch.cuda.amp import autocast, GradScaler
+# from torch.cuda.amp import autocast, GradScaler
 # scaler = GradScaler()
 
 
@@ -52,19 +52,20 @@ START_TRAIN_EPOCHS = 3  # Epoch after which simple augmentations start
 
 sys.path.append('./')
 from Pipelines.Dataset import CharacterDataset
-from Networks.Discriminator import Critic 
 from Networks.PlainGenerators.PlainWNetBase import WNetGenerator as PlainWnet
 from LossAccuracyEntropy.Loss import Loss
-from Utilities.utils import Logging, PrintInfoLog
-from Utilities.utils import SplitName
+from Tools.Utilities import Logging, PrintInfoLog
+from Tools.Utilities import SplitName
 
-from Pipelines.Dataset import transformTrainZero, transformTrainMinor, transformTrainHalf, transformTrainFull, transformTest
+from Pipelines.Dataset import transformTrainZero, transformTrainMinor, transformTrainHalf, transformTrainFull, transformSingleContentGT
+from Tools.Utilities import cv2torch, TransformToDisplay
+from pathlib import Path
+
+from Tools.Utilities import MakeGifFromPngs
 
 N_CRITIC = 5
 WARMUP_EPOCS = 1
 RAMP_EPOCHS = 5
-
-# WNetDict contains two variations of the WNetGenerator model, selecting based on configuration
 
 
 # Define data augmentation modes for various stages of training
@@ -166,7 +167,6 @@ class Trainer(nn.Module):
         self.generator.train()  # Set the model to training mode
         self.generator.cuda()  # Move the model to GPU
         
-        
         # Apply Xavier initialization to layers (Conv2D and Linear)
         for m in self.generator.modules():
             if isinstance(m, (nn.Conv2d)):
@@ -212,7 +212,11 @@ class Trainer(nn.Module):
 
         # Initialize training and testing datasets and data loaders
         self.trainset = CharacterDataset(self.config, sessionLog=self.sessionLog)
-        self.testSet = CharacterDataset(self.config, sessionLog=logging.info, is_train=False)
+        self.testSet = CharacterDataset(self.config, sessionLog=self.sessionLog, is_train=False)
+        
+        
+        self.trainset.RegisterEvaulationContentGts(self.config.userInterface.trainImageDir,'Train', debug=self.debug)
+        self.testSet.RegisterEvaulationContentGts(self.config.userInterface.trainImageDir,'Test', debug=self.debug)
         
 
         # Learning rate scheduler with exponential decay
@@ -234,6 +238,7 @@ class Trainer(nn.Module):
             self.generator.load_state_dict(ckptG['stateDict'])  # Load the model weights
             self.optimizerG.load_state_dict(ckptG['optimizer'])  # Load the optimizer state
             
+            
             # for framework
             listFiles = glob.glob(self.config.userInterface.expDir+'/Frameworks' + '/*.pth')
             latestFile = max(listFiles, key=os.path.getctime)  # Get the latest checkpoint file
@@ -246,8 +251,6 @@ class Trainer(nn.Module):
             for param_group in self.optimizerG.param_groups:
                 param_group['lr'] = self.config.trainParams.initLrG
                 
-            for param_group in self.optimizerD.param_groups:
-                param_group['lr'] = self.config.trainParams.initLrD
 
             # Apply the learning rate and gradient schedulers up to the start epoch
             for _ in range(self.startEpoch):
@@ -272,7 +275,7 @@ class Trainer(nn.Module):
             if layerName not in self.gradG[subName]:
                 self.gradG[subName].update({layerName: _gradient()})
             self.gradG[subName][layerName].count = self.gradG[subName][layerName].count + 1
-
+            
         # Log that the trainer is ready
         PrintInfoLog(self.sessionLog, 'Trainer prepared.')
 
@@ -287,7 +290,7 @@ class Trainer(nn.Module):
                 self.gradD[subName][key].value = 0.0
 
     def SummaryWriting(self, evalContents, evalStyles, evalGTs, evalFakes, epoch, step, 
-                       lossG, lossDict, mark='NA', writeImageToDisk=False):
+                       lossG, lossDict, mark='NA'):
         """
         Write summaries to TensorBoard including images and scalar losses.
 
@@ -337,11 +340,6 @@ class Trainer(nn.Module):
         elif 'Veryfing@' in mark:
             self.writer.add_image("Image in %s" % mark, output, dataformats='CHW', global_step=step)
         
-        # Save Grid Image to Disk 
-        if writeImageToDisk: 
-            outImg.save(os.path.join(self.config.userInterface.trainImageDir, "%s-Epoch%d.png" % (mark, epoch)))
-
-
         # Write scalar losses to TensorBoard
         self.writer.add_scalar('01-LossGenerator/SumLossG-' + mark, lossG, global_step=step)
         self.writer.add_scalar('01-LossReconstruction/L1-' + mark, lossDict['lossL1'], global_step=step)
@@ -355,7 +353,14 @@ class Trainer(nn.Module):
         self.writer.add_scalar('01-LossGenerator/CategoryFakeStyle-' + mark, lossDict['lossCategoryStyleFake'], global_step=step)
         self.writer.add_scalar('01-LossReconstruction/DeepPerceptualContentSum-' + mark, lossDict['deepPerceptualContent'], global_step=step)
         self.writer.add_scalar('01-LossReconstruction/DeepPerceptualStyleSum-' + mark, lossDict['deepPerceptualStyle'], global_step=step)
+        
+        # 记录 KL Loss（如果存在）
+        if 'kl_loss' in lossDict:
+            for ii in range(len(lossDict['kl_loss'])):
+                self.writer.add_scalar('02-LossKL/KL%d'% (ii+1) + '-' + mark , lossDict['kl_loss'][ii], global_step=step)
                 
+        
+        
         
         if mark == 'Train':
             # Clear previous gradient records
@@ -438,8 +443,7 @@ class Trainer(nn.Module):
                           'encodedContents':[encodedContentFeatures,encodedContentCategory],
                           'encodedStyles':[encodedStyleFeatures,encodedStyleCategory],
                           'oneHotLabels':[onehotContent, onehotStyle]}
-            if vae != -1:
-                    lossInputs.update({'vae': vae})
+            
 
             # with autocast():
             # Compute the total generator loss and detailed loss breakdown
@@ -457,25 +461,20 @@ class Trainer(nn.Module):
                                           (epoch+1, self.config.trainParams.epochs, Loss_dict['lossL1']), refresh=True)
 
             
-            if self.penalties.adversarialPenalty>eps and idx%N_CRITIC != (N_CRITIC-1) and epoch >= WARMUP_EPOCS:
-                self.optimizerD.zero_grad()
-                sumLossD.backward()  # Compute gradients
-                self.optimizerD.step()
-            else: 
-                self.optimizerG.zero_grad()
-                sumLossG.backward()  # Compute gradients
-            
-                # Gradient norm clipping and adjustment (if enabled)
-                if self.config.trainParams.gradientNorm:
-                    torch.nn.utils.clip_grad_norm_(self.generator.parameters(), max_norm=MAX_gradNorm)  # Clip gradients
-                    for name, param in self.generator.named_parameters():
-                        if param.grad is not None:
-                            gradNorm = torch.norm(param.grad)
-                            if gradNorm < self.gradGNormScheduler.GetThreshold():
-                                param.grad = param.grad + eps  # Prevent zero gradients by adding epsilon
-                                gradNorm = torch.norm(param.grad)  # Recompute gradient norm
-                                scaleFactor = self.gradGNormScheduler.GetThreshold() / (gradNorm + eps)  # Adjust scale factor
-                                param.grad = param.grad*scaleFactor  # Scale up the gradient
+            self.optimizerG.zero_grad()
+            sumLossG.backward()  # Compute gradients
+        
+            # Gradient norm clipping and adjustment (if enabled)
+            if self.config.trainParams.gradientNorm:
+                torch.nn.utils.clip_grad_norm_(self.generator.parameters(), max_norm=MAX_gradNorm)  # Clip gradients
+                for name, param in self.generator.named_parameters():
+                    if param.grad is not None:
+                        gradNorm = torch.norm(param.grad)
+                        if gradNorm < self.gradGNormScheduler.GetThreshold():
+                            param.grad = param.grad + eps  # Prevent zero gradients by adding epsilon
+                            gradNorm = torch.norm(param.grad)  # Recompute gradient norm
+                            scaleFactor = self.gradGNormScheduler.GetThreshold() / (gradNorm + eps)  # Adjust scale factor
+                            param.grad = param.grad*scaleFactor  # Scale up the gradient
                 
                 self.optimizerG.step()
 
@@ -489,39 +488,118 @@ class Trainer(nn.Module):
                 thisRoundStartItr = idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader)
                 self.SummaryWriting(evalContents=contents, evalStyles=styles, evalGTs=gt, evalFakes=generated, epoch=epoch+1,
                                     step=epoch * NUM_SAMPLE_PER_EPOCH + int(idx / (len(self.trainLoader)) * NUM_SAMPLE_PER_EPOCH)+1,
-                                    lossG=sumLossG,  lossDict=Loss_dict, mark='Train', writeImageToDisk=idx==len(self.trainLoader)-2)
+                                    lossG=sumLossG, lossDict=Loss_dict, mark='Train')
 
         time2 = time()  # Track end time for the epoch
         PrintInfoLog(self.sessionLog, 'Training completed @ Epoch: %d/%d training time: %f mins, L1Loss: %.3f' % 
                      (epoch+1, self.config.trainParams.epochs, (time2-time1)/60, Loss_dict['lossL1']))  # Log epoch time and loss
 
     def TestOneEpoch(self, epoch, thisSet, mark):
-        
-        # reset stylelist
-        # thisSet.ResetStyleList(epoch+1, mark)
-        # thisSet.ResetTrainAugment('ZERO', mark)
-        
         thisSet, thisLoader = self.ResetDataLoader(epoch = epoch+1, 
                                                    thisSet=thisSet, info='ZERO', 
                                                    mark=mark, isTrain=False)
         
-        
-        # thisSet, thisLoader = self.ResetDataLoader(thisSet=thisSet, thisLoader=thisLoader, info='Zero', mark=mark, isTrain=False)
-        
-        """Evaluate the model on the test dataset for a single epoch."""
-        is_train = False  # Disable training mode for evaluation
+        # # Disable training mode for evaluation
+        is_train = False
         self.generator.eval()  # Set the model to evaluation mode
-        time1 = time()  # Track start time
+        
         with torch.no_grad():  # Disable gradient calculations for efficiency
+
+            # Trim the evaluation content so that full batches fit evenly
+            trimmedEvalContent = thisSet.evalContents[: thisSet.evalContents.shape[0] // self.config.trainParams.batchSize * self.config.trainParams.batchSize]
+
+            # Split trimmed evaluation content into batches
+            # Each batch is of size (batch_size, C, H, W)
+            evalContentBatches  = np.split(trimmedEvalContent.float().cuda(), 
+                                            trimmedEvalContent.shape[0] // self.config.trainParams.batchSize, axis=0)
+
+            # Append remaining content as the last partial batch
+            remainder = thisSet.evalContents[trimmedEvalContent.shape[0]:]
+            if remainder.shape[0] > 0:
+                evalContentBatches.append(remainder.float().cuda())
+
+            # Load evaluation-time style data and label0 list
+            thisSet.styleFileDict
+            thisSet.evalStyleLabels
+            thisSet.evalListLabel0
+            K = self.config.datasetConfig.availableStyleNum  # Number of styles to select
+
+            fullGenerated = []
+
+            # Loop over each style label
+            for idx1, evalStyleLabel in tqdm(enumerate(thisSet.evalStyleLabels), total=len(thisSet.evalStyleLabels), 
+                                            desc=f"Verifying Examples @ {mark} Epoch {epoch+1}"):
+                # Flatten all style samples under this label
+                currentEvalStyleData = thisSet.styleFileDict[evalStyleLabel]
+                currentEvalStyleDataList = [item for sublist in currentEvalStyleData for item in sublist]
+
+                # Randomly select K styles (with replacement if not enough)
+                n = self.BaisedRandomK(K, len(currentEvalStyleDataList))
+                sampled = random.sample(currentEvalStyleDataList, n)
+                finalSelectedStyles = sampled if n >= K else sampled + random.choices(sampled, k=K - n)
+
+                # Load and stack selected style images
+                styleImgCat = torch.cat([
+                    (cv2torch(itemPath, transform=transformSingleContentGT) - 0.5) * 2
+                    for itemPath in finalSelectedStyles], dim=0).float().cuda()
+
+                # Generate images for each content batch
+                thisStyleGenerated = []
+                
+                for _, contentBatch in enumerate(evalContentBatches):
+                    
+                    # Broadcast style batch to match content batch
+                    styleImgCatCpy = styleImgCat.unsqueeze(0).repeat(contentBatch.shape[0], 1, 1, 1)  # (N, 5, 64, 64)
+                    blankGT = torch.zeros(contentBatch.shape[0], 1, 64, 64).float().cuda()
+                    generatedBatch = self.generator(contentBatch, styleImgCatCpy.reshape(-1, 1, 64, 64), blankGT, is_train=is_train)[4]
+                    thisStyleGenerated.append(generatedBatch)
+
+                # Concatenate all generated batches and store
+                thisStyleGenerated = torch.cat(thisStyleGenerated, dim=0)
+                fullGenerated.append(thisStyleGenerated)
+
+                # Prepare display images: generated vs. real GT
+                fakeDisplay = TransformToDisplay(thisStyleGenerated)
+                realDisplay = TransformToDisplay(thisSet.evalGts[idx1][0])
+                separator = Image.new("RGB", (3, fakeDisplay.height), (0, 0, 0))  # 3px black separator
+
+                combined = Image.new("RGB", (fakeDisplay.width + 3 + realDisplay.width, fakeDisplay.height))
+                combined.paste(fakeDisplay, (0, 0))
+                combined.paste(separator, (fakeDisplay.width, 0))
+                combined.paste(realDisplay, (fakeDisplay.width + 3, 0))
+
+                savePath = os.path.join(self.config.userInterface.trainImageDir, evalStyleLabel.zfill(5))
+                os.makedirs(savePath, exist_ok=True)
+                combined.save(os.path.join(savePath, f"{mark}-Epoch{epoch}.png"))
+
+            # Create GIF animations from saved PNGs for each style label
+            for style in thisSet.evalStyleLabels:
+                currentStyleDir = os.path.join(self.config.userInterface.trainImageDir, 
+                                                style.zfill(5))
+                
+                # Define the directory and filter condition
+                currentStyleDir = Path(currentStyleDir)  # ensure it's a Path object
+
+                # Collect and sort files
+                files = sorted([p for p in Path(currentStyleDir).rglob("*.png") if mark in p.name],
+                                key=lambda p: p.name)  # sort alphabetically by filename
+
+                # Convert Path objects to strings (optional)
+                files = [str(p) for p in files]
+                MakeGifFromPngs(self.sessionLog, files, os.path.join(self.config.userInterface.trainImageDir, f"Style-{style.zfill(5)}-{mark}.gif"))
+
+            
+            # """Evaluate the model on the test dataset for a single epoch."""
+            
+            time1 = time()  # Track start time
             thisRoundStartItr = 0
-            testProgress = tqdm(enumerate(thisLoader), total=len(thisLoader), desc="Verifying @ %s Epoch %d" % (mark, epoch+1))
+            testProgress = tqdm(enumerate(thisLoader), total=len(thisLoader), desc="Verifying Statistics @ %s Epoch %d" % (mark, epoch+1))
             for idx, (contents, styles, gt, onehotContent, onehotStyle) in testProgress:
                 # Move data to the GPU
                 contents, styles, gt, onehotContent, onehotStyle = contents.cuda(), \
                     styles.cuda(), gt.cuda(), onehotContent.cuda(), onehotStyle.cuda()
 
                 # Reshape style input
-                # reshaped_styles = styles.reshape(self.config.trainParams.batchSize * self.config.datasetConfig.inputStyleNum, 1, 64, 64)
                 reshaped_styles = styles.reshape(-1, 1, 64, 64)
 
                 # Forward pass
@@ -530,19 +608,18 @@ class Trainer(nn.Module):
 
                 # Prepare inputs for the loss function
                 lossInputs = {'InputContents': contents, 
-                              'InputStyles': reshaped_styles, 
-                              'GT': gt, 'fake':generated,
-                              'encodedContents':[encodedContentFeatures,encodedContentCategory],
-                              'encodedStyles':[encodedStyleFeatures,encodedStyleCategory],
-                              'oneHotLabels':[onehotContent, onehotStyle]}
+                                'InputStyles': reshaped_styles, 
+                                'GT': gt, 'fake':generated,
+                                'encodedContents':[encodedContentFeatures,encodedContentCategory],
+                                'encodedStyles':[encodedStyleFeatures,encodedStyleCategory],
+                                'oneHotLabels':[onehotContent, onehotStyle]}
                 if vae != -1:
                     lossInputs.update({'vae': vae})
                 
                 
                 # with autocast():
                 sumLossG, Loss_dict = self.sumLoss(epoch, lossInputs,
-                                                             SplitName(self.config.generator.mixer)[1:-1],
-                                                             mode=mark)
+                                                                SplitName(self.config.generator.mixer)[1:-1], mode=mark)
 
                 
                 # Update progress bar with current loss
@@ -551,7 +628,7 @@ class Trainer(nn.Module):
                 dispID = dispID.replace('Mixer','M')
                 dispID = dispID.replace('Decoder','D')
                 testProgress.set_description(dispID + " Verifying at %s @ Epoch: %d/%d, LossL1: %.3f" %
-                                             (mark, epoch+1, self.config.trainParams.epochs, Loss_dict['lossL1']), refresh=True)
+                                                (mark, epoch+1, self.config.trainParams.epochs, Loss_dict['lossL1']), refresh=True)
 
                 # Write summaries at regular intervals
                 if (idx * float(NUM_SAMPLE_PER_EPOCH) / len(thisLoader) - thisRoundStartItr > RECORD_PCTG and epoch < START_TRAIN_EPOCHS) or \
@@ -560,8 +637,7 @@ class Trainer(nn.Module):
                     thisRoundStartItr = idx * float(NUM_SAMPLE_PER_EPOCH) / len(thisLoader)
                     self.SummaryWriting(evalContents=contents, evalStyles=styles, evalGTs=gt, evalFakes=generated,epoch=epoch+1,
                                         step=epoch * NUM_SAMPLE_PER_EPOCH + int(idx / len(thisLoader) * NUM_SAMPLE_PER_EPOCH)+1,
-                                        lossG=sumLossG, lossDict=Loss_dict, 
-                                        mark='Veryfing@'+mark, writeImageToDisk=idx==len(thisLoader)-2)
+                                        lossG=sumLossG, lossDict=Loss_dict, mark='Veryfing@'+mark)
 
         time2 = time()  # Track end time for the epoch
         PrintInfoLog(self.sessionLog, 'Verifying completed @ %s @ Epoch: %d/%d verifying time: %f mins, L1Loss: %.3f' % 
@@ -571,7 +647,11 @@ class Trainer(nn.Module):
         """Main training and evaluation loop."""
         train_start = time()  # Start time of the entire training process
         training_epoch_list = range(self.startEpoch, self.config.trainParams.epochs, 1)  # List of epochs to train
-
+        PrintInfoLog(self.sessionLog, self.separator)
+        
+        
+        # self.TestOneEpoch(self.startEpoch-1, thisSet=self.trainset, mark='TrainingSet')  # Test at the start if not skipping   
+        # self.TestOneEpoch(self.startEpoch-1, thisSet=self.testSet,  mark='TestingSet')  # Test at the start if not skipping    
         if (not self.config.userInterface.skipTest) and self.startEpoch != 0:
             self.TestOneEpoch(self.startEpoch-1, thisSet=self.trainset, mark='TrainingSet')  # Test at the start if not skipping   
             self.TestOneEpoch(self.startEpoch-1, thisSet=self.testSet,  mark='TestingSet')  # Test at the start if not skipping     
@@ -605,15 +685,30 @@ class Trainer(nn.Module):
             # Step the learning rate scheduler and gradient norm scheduler
             self.lrScheculerG.step()
             self.gradGNormScheduler.Step()
-
         # After training, log the total time taken and close the TensorBoard writer
         train_end = time()  # Record the end time of training
         training_time = (train_end - train_start) / 3600  # Convert total training time to hours
         self.writer.close()  # Close the TensorBoard writer
         logging.info('Training finished, tensorboardX writer closed')
         logging.info('Training total time: %f hours.' % training_time)
+        
+        
 
     
+    
+    def BaisedRandomK(self, K, N):
+        """
+        从 1 到 min(K, N) 中选择一个整数 n，
+        小值更可能被选中。
+        """
+        max_choice = min(K, N)
+        # 生成反比例权重，例如 [1/1, 1/2, ..., 1/max_choice]
+        weights = [1 / (i + 1) for i in range(max_choice)]
+        # 使用权重进行带偏采样
+        n = random.choices(range(1, max_choice + 1), weights=weights, k=1)[0]
+        return n
+        
+        
     def ResetDataLoader(self, epoch, thisSet, info, mark, isTrain):
         """
         Set the data augmentation mode for training.
@@ -622,21 +717,7 @@ class Trainer(nn.Module):
             info (str): Augmentation mode ('START', 'INITIAL', 'FULL', 'NONE').
         """
         
-        def _biased_random_k(K, N):
-            """
-            从 1 到 min(K, N) 中选择一个整数 n，
-            小值更可能被选中。
-            """
-            max_choice = min(K, N)
-            # 生成反比例权重，例如 [1/1, 1/2, ..., 1/max_choice]
-            weights = [1 / (i + 1) for i in range(max_choice)]
-            # 使用权重进行带偏采样
-            n = random.choices(range(1, max_choice + 1), weights=weights, k=1)[0]
-            return n
-        
         PrintInfoLog(self.sessionLog, "Reset " + mark + " StyleList and Switch Data Augmentation %s for %s at Epoch: %d ..." % (info, mark, epoch), end='\r')  
-        
-        
         if info == 'START':
             thisSet.augment = transformTrainMinor
         elif info == 'INITIAL':
@@ -648,26 +729,18 @@ class Trainer(nn.Module):
         elif info == 'NONE':
             thisSet.augment = None
             
-        
-        
         full = thisSet.styleListFull  # 原始样本
-        K = self.config.datasetConfig.inputStyleNum  # 需要的采样数量
+        K = self.config.datasetConfig.availableStyleNum  # 需要的采样数量
 
         thisSet.styleList = []
         for styles in full:
             if len(styles) == 0:
                 thisSet.styleList.append([])  # 无可选项则为空
                 continue
-
-            # n = random.randint(1, min(K, len(styles)))  # 1 到 K 中的一个值，不能超过原有样本数
-            # sampled = random.sample(styles, n)  # 先采样 n 个不同的
             
-            n = _biased_random_k(K, len(styles))
+            n = self.BaisedRandomK(K, len(styles))
             sampled = random.sample(styles, n)
             
-            
-            
-
             # 若不够 K，则从 sampled 中有放回采样补齐
             if n < K:
                 extra = random.choices(sampled, k=K - n)

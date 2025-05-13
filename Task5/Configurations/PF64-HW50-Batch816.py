@@ -58,10 +58,10 @@ penalties = {
         'PenaltyConstStyle':0.2,
         'PenaltyDiscriminatorCategory': 0,
         'GeneratorCategoricalPenalty': 0.,
-        'vaePenalty': 1,        
+        'PenaltyVaeKl': 1,        
         'PenaltyContentFeatureExtractor': [1,1,1,1,1],
         'PenaltyStyleFeatureExtractor':[1,1,1,1],
-        'adversarialPenalty':1,
-        'gradientPenalty':10
+        'PenaltyAdversarial':1,
+        'PenaltyDiscriminatorPenalty':10
 }
 

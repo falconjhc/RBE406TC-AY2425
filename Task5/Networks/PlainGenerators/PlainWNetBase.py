@@ -79,15 +79,20 @@ class WNetGenerator(nn.Module):
         enc_content_list_onReal, enc_style_list_onReal = [], [] 
         reshaped_style_list_onReal = []
         
+        B = content_inputs.shape[0]
+        
         # Process each output from the content and style encoders
         for content, style in zip(content_outputs_onReal, style_outputs_onReal):
-            reshaped_style_outputs = self.TensorReshape(style, is_train)  # Reshape style features for batch processing
+            reshaped_style_outputs = self.TensorReshape(style, is_train, B)  # Reshape style features for batch processing
             max_style_output = torch.max(reshaped_style_outputs, dim=1)[0]  # Max-pooling on style outputs
             enc_content_list_onReal.append(content)
             enc_style_list_onReal.append(max_style_output)
             reshaped_style_list_onReal.append(reshaped_style_outputs)
 
         # Mix the encoded content and style features
+        
+        if enc_content_list_onReal[2].shape!=enc_style_list_onReal[2].shape:
+            a=1
         mix_output = self.mixer(enc_content_list_onReal, enc_style_list_onReal)
         
         # Decode the mixed features to generate the final output image
@@ -103,10 +108,10 @@ class WNetGenerator(nn.Module):
         styleCategoryOnGenerated, styleFeaturesOnGenerated = self.styleEncoder(generated)
 
         # Max-pooling operations to extract category features
-        max_content_category_onReal = torch.max(self.TensorReshape(content_category_onReal, is_train), dim=1)[0]
-        max_style_category_onReal = torch.max(self.TensorReshape(style_category_onReal, is_train), dim=1)[0]
-        max_lossCategoryContentFakeerated = torch.max(self.TensorReshape(contentCategoryOnGenerated, is_train), dim=1)[0]
-        max_lossCategoryStyleFakeerated = torch.max(self.TensorReshape(styleCategoryOnGenerated, is_train), dim=1)[0]
+        max_content_category_onReal = torch.max(self.TensorReshape(content_category_onReal, is_train, content_category_onReal.shape[0]), dim=1)[0]
+        max_style_category_onReal = torch.max(self.TensorReshape(style_category_onReal, is_train, content_category_onReal.shape[0]), dim=1)[0]
+        max_lossCategoryContentFakeerated = torch.max(self.TensorReshape(contentCategoryOnGenerated, is_train, content_category_onReal.shape[0]), dim=1)[0]
+        max_lossCategoryStyleFakeerated = torch.max(self.TensorReshape(styleCategoryOnGenerated, is_train, content_category_onReal.shape[0]), dim=1)[0]
 
         # Dictionary to store encoded features and categories for content and style
         encodedContentFeatures = {}
@@ -136,7 +141,7 @@ class WNetGenerator(nn.Module):
         return encodedContentFeatures, encodedStyleFeatures, encodedContentCategory, encodedStyleCategory, generated, -1
     
     # Method to reshape tensors based on training mode and batch size
-    def TensorReshape(self, input_tensor, is_train):
+    def TensorReshape(self, input_tensor, is_train, B):
         """
         Reshape input tensor based on the training mode and batch size.
 
@@ -147,17 +152,11 @@ class WNetGenerator(nn.Module):
         Returns:
             Reshaped tensor.
         """
-        # if len(input_tensor.shape) == 4:
-        #     return input_tensor.reshape(self.config.trainParams.batchSize, input_tensor.shape[0] // self.config.trainParams.batchSize, input_tensor.shape[1], input_tensor.shape[2], input_tensor.shape[3])
-        # elif len(input_tensor.shape) == 3:
-        #     return input_tensor.reshape(self.config.trainParams.batchSize, input_tensor.shape[0] // self.config.trainParams.batchSize, input_tensor.shape[1], input_tensor.shape[2])
-        # elif len(input_tensor.shape) == 2:
-        #     return input_tensor.reshape(self.config.trainParams.batchSize, input_tensor.shape[0] // self.config.trainParams.batchSize, input_tensor.shape[1])
-        
+        # B = input_tensor.shape[0]
         
         if len(input_tensor.shape) == 4:
-            return input_tensor.reshape(-1, input_tensor.shape[0] // self.config.trainParams.batchSize, input_tensor.shape[1], input_tensor.shape[2], input_tensor.shape[3])
+            return input_tensor.reshape(-1, input_tensor.shape[0] // B, input_tensor.shape[1], input_tensor.shape[2], input_tensor.shape[3])
         elif len(input_tensor.shape) == 3:
-            return input_tensor.reshape(-1, input_tensor.shape[0] // self.config.trainParams.batchSize, input_tensor.shape[1], input_tensor.shape[2])
+            return input_tensor.reshape(-1, input_tensor.shape[0] // B, input_tensor.shape[1], input_tensor.shape[2])
         elif len(input_tensor.shape) == 2:
-            return input_tensor.reshape(-1, input_tensor.shape[0] // self.config.trainParams.batchSize, input_tensor.shape[1])
+            return input_tensor.reshape(-1, input_tensor.shape[0] // B, input_tensor.shape[1])

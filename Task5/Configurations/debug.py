@@ -56,9 +56,9 @@ penalties = {
 
         'PenaltyStyleFeatureExtractor':[1],
         'PenaltyContentFeatureExtractor':[1],
-        'vaePenalty': 1,
-        'adversarialPenalty':0.2,
-        'gradientPenalty':10
+        'PenaltyVaeKl': 1,
+        'PenaltyAdversarial':0.2,
+        'PenaltyDiscriminatorPenalty':10
 
 }
 

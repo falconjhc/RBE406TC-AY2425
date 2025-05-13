@@ -4,7 +4,7 @@ dataPathRoot = '/data0/haochuan/'
 
 hyperParams = {
         'debugMode':1,
-        'expID':'20250509PF-Batch816',# experiment name prefix
+        'expID':'20250513PF-Batch816',# experiment name prefix
         'expDir': '/data-shared/server01/data1/haochuan/CharacterRecords2025May-051/',
         
         'YamlPackage': '../YamlLists/PF64-PF80/',
@@ -61,11 +61,11 @@ penalties = {
         'PenaltyConstStyle':0.2,
         'PenaltyDiscriminatorCategory': 0,
         'GeneratorCategoricalPenalty': 0.,
-        'vaePenalty': 1,        
+        'PenaltyVaeKl': 1,        
         'PenaltyContentFeatureExtractor': [1,1,1,1,1],
         'PenaltyStyleFeatureExtractor':[1,1,1,1,1],
-        'adversarialPenalty':1,
-        'gradientPenalty':10
+        'PenaltyAdversarial':1,
+        'PenaltyDiscriminatorPenalty':10
         
 }
 

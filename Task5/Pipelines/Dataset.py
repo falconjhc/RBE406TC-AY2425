@@ -17,18 +17,21 @@ import yaml
 import cv2
 from time import time
 sys.path.append('./')
-from Utilities.utils import cv2torch, read_file_to_dict
+from Tools.Utilities import cv2torch, read_file_to_dict
 import time
 from tqdm import tqdm
 displayInterval = 25
 # from torchvision.transforms import InterpolationMode
 from PIL import Image
 import numpy as np
-from Utilities.utils import PrintInfoLog
-from Utilities.utils import MergeAllDictKeys
+from Tools.Utilities import PrintInfoLog
+from Tools.Utilities import MergeAllDictKeys
 import glob
 import torchvision.transforms.functional as F
+from Tools.Utilities import GB2312CharMapper,GenerateFontsFromOtts
+import math
 
+# from Tools.TestTools import get_chars_set_from_level1_2, get_revelant_data
 
 
 def RotationAugmentationToChannels(img, config, fill=1, style=False):
@@ -252,6 +255,7 @@ class CharacterDataset(Dataset):
         """
         self.is_train = is_train
         self.sessionLog = sessionLog
+        self.config = config
 
         # Load paths to YAML files for train/test
         filesIdentified = glob.glob(config.datasetConfig.yamls+"*.yaml")
@@ -266,7 +270,7 @@ class CharacterDataset(Dataset):
 
         # Load the number of content and style inputs
         self.input_content_num = config.datasetConfig.inputContentNum
-        self.input_style_num = config.datasetConfig.inputStyleNum
+        self.input_style_num = config.datasetConfig.availableStyleNum
 
         strat_time = time.time()  # Start timer to measure data loading time
         self.gtDataList = self.CreateDataList(self.gtYaml)  # Load the ground truth data
@@ -288,12 +292,12 @@ class CharacterDataset(Dataset):
                 PrintInfoLog(self.sessionLog, "Loading " + _path + '...', end='\r')
                 styleFiles.append(yaml.load(f.read(), Loader=yaml.FullLoader)) 
                 PrintInfoLog(self.sessionLog, "Loading " + _path + ' completed.')
-        styleFileDict = MergeAllDictKeys(styleFiles)
+        self.styleFileDict = MergeAllDictKeys(styleFiles)
         
         
         self.contentList, self.styleListFull = [], []
         # Prepare content and style lists for each data point
-        styleFiles = styleFileDict  # assign for compatibility with the original variable name
+        styleFiles = self.styleFileDict  # assign for compatibility with the original variable name
         for idx, (_, label0, label1) in tqdm(enumerate(self.gtDataList), total=len(self.gtDataList), desc="Loading: "):
             
             # contentFiles[label0] should already be a flat list — no need to reassign
@@ -319,13 +323,76 @@ class CharacterDataset(Dataset):
 
         # Initialize labels and one-hot encoding vectors
         self.label0order = config.datasetConfig.loadedLabel0Vec
-                # One-hot encoding for content and style labels
+        
+        # One-hot encoding for content and style labels
         self.label1order = config.datasetConfig.loadedLabel1Vec
         self.onehotContent, self.onehotStyle = [0 for _ in range(len(self.label0order))], [0 for _ in range(len(self.label1order))]
 
         
         end_time = time.time()  # Measure the end time for data loading
-        PrintInfoLog(self.sessionLog, f'dataset cost:{(end_time - strat_time):.2f}s')
+        
+        
+        
+        PrintInfoLog(self.sessionLog, f'Dataset cost: {(end_time - strat_time):.2f}s')
+        
+        
+    def RegisterEvaulationContentGts(self, path, mark, debug):
+        PrintInfoLog(self.sessionLog, f'EvalExample Resigtration for %s ...' % mark, end='\r')
+        
+        start_time = time.time()  # Measure the end time for data loading
+        if debug:
+            self.evalListLabel0, charList=GB2312CharMapper(targetTxtPath='../Scripts/EvalTxts/debug.txt')
+        else:
+            self.evalListLabel0, charList=GB2312CharMapper(targetTxtPath='../Scripts/EvalTxts/过秦论.txt')
+        self.evalContents = GenerateFontsFromOtts(chars=charList)
+        
+        # img = -1
+        if self.config.debug:
+            self.evalContents = self.evalContents[:,0:5,:,:]
+            
+        cols, rows, h, w = self.evalContents.shape    # shape: (cols, rows, h, w)
+        # 1. Rearrange dimensions: (cols, rows, h, w) → (rows, h, cols, w)
+        grid = self.evalContents.permute(1, 2, 0, 3)   # (rows, h, cols, w)
+
+        # 2. Reshape into a large 2D tensor: (rows*h, cols*w)
+        bigImg = grid.reshape(rows * h, cols * w)
+
+        # 3. Invert (assuming pixel values in [0, 255])
+        bigImg = 255 - bigImg
+
+        # 4. Transpose for final display: (H, W) → (W, H)
+        bigImg = bigImg.T
+
+        # 5. Convert to uint8 numpy and save image
+        img = Image.fromarray(bigImg.cpu().numpy().astype('uint8'))
+        if mark == 'Train':
+            img.save(os.path.join(path, 'ExampleContents.png' ))
+            
+        
+            
+        # keep labels whose 0‑index and 1‑index lists are both non‑empty
+        self.evalStyleLabels = [label for label, sublists in self.styleFileDict.items() if all(sublists)]          # 保证现有的每个子列表都非空
+
+            
+        # ── 1. 预先构建快速查表 {(label1, label0): tuple} ─────────────────────────
+        lookup = {(e[2], e[1]): e for e in self.gtDataList}   # e = (path, label0, label1)
+
+        # ── 2. 生成 targetGtLabels，缺项用 ('', label0, label1) 填充 ─────────────
+        targetGts = [[lookup.get((label1, label0),
+                                 ('', label0, label1)) for label0 in self.evalListLabel0] for label1 in self.evalStyleLabels ]
+        
+        self.evalGts = []
+        for gt in targetGts:
+            outTensor = torch.cat([
+                (cv2torch(item[0], transform=transformSingleContentGT) - 0.5) * 2
+                if item[0] != '' else torch.full((1, 64, 64), 1)
+                for item in gt
+            ], dim=0)
+            self.evalGts.append((outTensor,gt[0][2]))
+        end_time = time.time()  # Measure the end time for data loading
+        PrintInfoLog(self.sessionLog, f'EvalExample Resigtration completes for %s:{(end_time - start_time): .2f}s' % mark)
+        return img 
+    
         
     def ResetStyleList(self, epoch, mark):
         """
@@ -387,6 +454,9 @@ class CharacterDataset(Dataset):
         onehotStyle = torch.tensor(self.onehotStyle)
         onehotStyle[style] = 1
 
+        # permContentIdx = torch.randperm(tensorContent.size(0))     
+        # tensorContent = tensorContent[permContentIdx]
+        
         return tensorContent.float(), tensorStyle.float(), tensorGT.float(), onehotContent.float(), onehotStyle.float()
 
     def __len__(self):

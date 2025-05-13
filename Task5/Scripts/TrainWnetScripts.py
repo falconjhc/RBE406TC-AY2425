@@ -50,7 +50,7 @@ parser.add_argument('--decoder', dest='decoder', type=str, required=False, defau
 parser.add_argument('--device', dest='device', type=str, required=True, default='cpu', help="Device to use, e.g., 'cpu' or 'cuda'")
 parser.add_argument('--debug', dest='debug', type=int, required=False, default=0, help="Enable debugging mode: 1 for debug, 0 for normal")
 parser.add_argument('--wnet', dest='wnet', type=str, required=True, default='general', help="Type of network: 'general' or 'plain'")
-parser.add_argument('--inputStyleNum', dest='inputStyleNum', type=int, required=True, default='general', help="Number of shotted styles")
+parser.add_argument('--availableStyleNum', dest='availableStyleNum', type=int, required=True, default='general', help="Number of shotted styles")
 
 
 def SetSeeds(seed=0):    
@@ -59,7 +59,6 @@ def SetSeeds(seed=0):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-
     os.environ["PYTHONHASHSEED"] = str(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False

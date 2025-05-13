@@ -20,7 +20,7 @@ MAX_gradNorm = 1.0
 MIN_gradNorm = 1e-1
 GP_LAMBDA = 10
 
-from Utilities.utils import PrintInfoLog
+from Tools.Utilities import PrintInfoLog
 import copy
 
 class Loss(nn.Module):
@@ -37,9 +37,9 @@ class Loss(nn.Module):
         self.GeneratorCategoricalPenalty = penalty['GeneratorCategoricalPenalty']
         self.PenaltyContentFeatureExtractor = penalty['PenaltyContentFeatureExtractor']
         self.PenaltyStyleFeatureExtractor = penalty['PenaltyStyleFeatureExtractor']
-        self.vaePenalty = penalty['vaePenalty']
-        self.adversarial = penalty['adversarialPenalty']
-        self.gradientPenalty = penalty['gradientPenalty']
+        self.PenaltyVaeKl = penalty['PenaltyVaeKl']
+        self.adversarial = penalty['PenaltyAdversarial']
+        self.PenaltyDiscriminatorPenalty = penalty['PenaltyDiscriminatorPenalty']
         
         self.contentExtractorList = []
         if 'extractorContent' in config:
@@ -150,7 +150,7 @@ class Loss(nn.Module):
 
         return critic_loss
     
-    def ComputeGradientPenalty(self, discriminator, real_samples, fake_samples, lambda_gp=10):
+    def ComputePenaltyDiscriminatorPenalty(self, discriminator, real_samples, fake_samples, lambda_gp=10):
         """
         Calculates the gradient penalty loss for WGAN-GP.
         
@@ -245,11 +245,11 @@ class Loss(nn.Module):
         lossL1, lossConstContentReal, lossConstStyleReal, lossConstContentFake, lossConstStyleFake, \
         lossCategoryContentReal, lossCategoryContentFake, lossCategoryStyleReal, lossCategoryStyleFake = losses
 
-
         # 计算其它损失
         deepPerceptualContentSum, deepPerceptualStyleSum, contentMSEList, styleMSEList = \
             self.FeatureExtractorLoss(GT=GT, imgFake=generated)
 
+        
         
         deepLossContent = sum([x * y for x, y in zip(contentMSEList, self.PenaltyContentFeatureExtractor)])/sum(self.PenaltyContentFeatureExtractor)
         deepLossStyle = sum([x * y for x, y in zip(styleMSEList, self.PenaltyStyleFeatureExtractor)])/sum(self.PenaltyContentFeatureExtractor)
@@ -259,6 +259,10 @@ class Loss(nn.Module):
                 (lossConstStyleReal + lossConstStyleFake) * self.PenaltyConstStyle + \
                     +deepLossContent+deepLossStyle
                 
+        # sumLossG_Warmup = lossL1 * self.PenaltyReconstructionL1 + \
+        # (lossConstContentReal + lossConstContentFake) * self.PenaltyConstContent + \
+        # (lossConstStyleReal + lossConstStyleFake) * self.PenaltyConstStyle + \
+        # fullKL * self.PenaltyVaeKl
 
         lossDict = {'lossL1': lossL1,
                     'lossConstContentReal': lossConstContentReal,
@@ -273,6 +277,7 @@ class Loss(nn.Module):
                     'deepPerceptualStyle': deepPerceptualStyleSum,
                     'deepPerceptualContentList': contentMSEList,
                     'deepPerceptualStyleList': styleMSEList}
+      
         return sumLossG, lossDict
 
     def calculate_kl_divergence(self, vaeMeans, vaeLogVars):

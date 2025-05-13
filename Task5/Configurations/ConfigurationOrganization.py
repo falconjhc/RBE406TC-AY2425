@@ -1,7 +1,7 @@
 import os
 import importlib
 import torch
-from Utilities.utils import SplitName, read_file_to_dict
+from Tools.Utilities import SplitName, read_file_to_dict
 
 # Network configuration object, defines the properties of a specific network
 class NetworkConfigObject(object):
@@ -41,9 +41,9 @@ class NetworkConfigObject(object):
 
 # Configuration object for the dataset
 class DatasetConfigObject(object):
-    def __init__(self, augmentation, inputStyleNum, inputContentNum, imgWidth, channels, label0VecTxt, label1VecTxt, dataRoot):
+    def __init__(self, augmentation, availableStyleNum, inputContentNum, imgWidth, channels, label0VecTxt, label1VecTxt, dataRoot):
         self.augmentation = augmentation  # Type of data augmentation to apply
-        self.inputStyleNum = inputStyleNum  # Number of input style images
+        self.availableStyleNum = availableStyleNum  # Number of input style images
         self.inputContentNum = inputContentNum  # Number of input content images
         self.imgWidth = imgWidth  # Width of input images
         self.channels = channels  # Number of channels in the images (e.g., RGB or grayscale)
@@ -140,7 +140,7 @@ class ParameterSetting(object):
         # Load dataset configuration and paths
         dataRootPath = importlib.import_module('.' + args.config, package='Configurations').dataPathRoot
         self.config.datasetConfig = DatasetConfigObject(augmentation=self.config.augmentation,
-                                                        inputStyleNum=args.inputStyleNum, 
+                                                        availableStyleNum=args.availableStyleNum, 
                                                         inputContentNum=self.config.inputContentNum,
                                                         imgWidth=self.config.imgWidth,
                                                         channels=self.config.channels,
