@@ -35,6 +35,7 @@ from datetime import datetime
 
 # from torch.cuda.amp import autocast, GradScaler
 # scaler = GradScaler()
+from PIL import Image, ImageDraw, ImageFont
 
 
 # Constants for model training
@@ -51,13 +52,13 @@ START_TRAIN_EPOCHS = 3  # Epoch after which simple augmentations start
 
 
 sys.path.append('./')
-from Pipelines.Dataset import CharacterDataset
+from Pipelines.DatasetWnet import CharacterDataset
 from Networks.PlainGenerators.PlainWNetBase import WNetGenerator as PlainWnet
 from LossAccuracyEntropy.Loss import Loss
 from Tools.Utilities import Logging, PrintInfoLog
 from Tools.Utilities import SplitName
 
-from Pipelines.Dataset import transformTrainZero, transformTrainMinor, transformTrainHalf, transformTrainFull, transformSingleContentGT
+from Pipelines.DatasetWnet import transformTrainZero, transformTrainMinor, transformTrainHalf, transformTrainFull, transformSingleContentGT
 from Tools.Utilities import cv2torch, TransformToDisplay
 from pathlib import Path
 
@@ -204,8 +205,13 @@ class Trainer(nn.Module):
         self.workerGenerator.manual_seed(self.config.seed)
         if not self.debug:
             self.workersNum = 24
+            if 'HW' in self.config.expID:
+                gtFileTxtDir = "../GTList/HW/"
+            elif 'PF' in self.config.expID:
+                gtFileTxtDir = "../GTList/PF/"
         else:
             self.workersNum = 1  # No multiprocessing in debug mode
+            gtFileTxtDir = "../GTList/Debug/"
         
         # Log the number of threads used for reading data
         PrintInfoLog(self.sessionLog, f"Reading Data: {self.workersNum}/{multiprocessing.cpu_count()} Threads")
@@ -215,8 +221,8 @@ class Trainer(nn.Module):
         self.testSet = CharacterDataset(self.config, sessionLog=self.sessionLog, is_train=False)
         
         
-        self.trainset.RegisterEvaulationContentGts(self.config.userInterface.trainImageDir,'Train', debug=self.debug)
-        self.testSet.RegisterEvaulationContentGts(self.config.userInterface.trainImageDir,'Test', debug=self.debug)
+        self.trainset.RegisterEvaulationContentGts(self.config.userInterface.trainImageDir,'Train', debug=self.debug, gtListFile=gtFileTxtDir)
+        self.testSet.RegisterEvaulationContentGts(self.config.userInterface.trainImageDir,'Test', debug=self.debug, gtListFile=gtFileTxtDir)
         
 
         # Learning rate scheduler with exponential decay
@@ -518,10 +524,6 @@ class Trainer(nn.Module):
             if remainder.shape[0] > 0:
                 evalContentBatches.append(remainder.float().cuda())
 
-            # Load evaluation-time style data and label0 list
-            thisSet.styleFileDict
-            thisSet.evalStyleLabels
-            thisSet.evalListLabel0
             K = self.config.datasetConfig.availableStyleNum  # Number of styles to select
 
             fullGenerated = []
@@ -546,8 +548,7 @@ class Trainer(nn.Module):
                 # Generate images for each content batch
                 thisStyleGenerated = []
                 
-                for _, contentBatch in enumerate(evalContentBatches):
-                    
+                for contentBatch in evalContentBatches:
                     # Broadcast style batch to match content batch
                     styleImgCatCpy = styleImgCat.unsqueeze(0).repeat(contentBatch.shape[0], 1, 1, 1)  # (N, 5, 64, 64)
                     blankGT = torch.zeros(contentBatch.shape[0], 1, 64, 64).float().cuda()
@@ -570,7 +571,26 @@ class Trainer(nn.Module):
 
                 savePath = os.path.join(self.config.userInterface.trainImageDir, evalStyleLabel.zfill(5))
                 os.makedirs(savePath, exist_ok=True)
-                combined.save(os.path.join(savePath, f"{mark}-Epoch{epoch}.png"))
+                
+                
+                draw = ImageDraw.Draw(combined)
+                font = ImageFont.load_default()
+
+                # Text to write
+                text = "Generated vs. Ground Truth @ Epoch %03d" % (epoch+1)
+
+                # Compute text bounding box to get size
+                bbox = draw.textbbox((0, 0), text, font=font)
+                text_width = bbox[2] - bbox[0]
+                text_height = bbox[3] - bbox[1]
+
+                # Bottom-right corner position with 10px margin
+                x = combined.width - text_width - 10
+                y = combined.height - text_height - 10
+
+                # Draw the text
+                draw.text((x, y), text, font=font, fill=(0, 0, 0))
+                combined.save(os.path.join(savePath, f"{mark}-Epoch{epoch+1:03d}.png"))
 
             # Create GIF animations from saved PNGs for each style label
             for style in thisSet.evalStyleLabels:
