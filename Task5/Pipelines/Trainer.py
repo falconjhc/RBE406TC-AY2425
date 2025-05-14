@@ -456,7 +456,7 @@ class Trainer(nn.Module):
             raise RuntimeError("No frames provided to log.")
 
         video_tensor = torch.stack(tensor_frames).unsqueeze(0)  # (1, T, C, H, W)
-        self.writer.add_video(tag, video_tensor, global_step=0, fps=fps)
+        self.writer.add_video(tag, video_tensor, global_step=step, fps=fps)
         
         
     def TrainOneEpoch(self, epoch):
