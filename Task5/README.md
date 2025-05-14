@@ -9,7 +9,7 @@ To set up the environment, you can create a Conda environment and install the re
 
 1. **Create a Conda Environment:**
 ```bash
-conda create -n pytorch-character python=3.9
+conda create -n pytorch-character python=3.10
 ```
    
 2. **Activate the Conda Environment:**

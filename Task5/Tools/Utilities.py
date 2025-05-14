@@ -523,4 +523,5 @@ def MakeGifFromPngs(handler,
         duration=duration,
         loop=loop
     )
-    # PrintInfoLog(handler, f"GIF saved to: {output_path}")
+    
+    return frames
