@@ -336,90 +336,159 @@ class CharacterDataset(Dataset):
         PrintInfoLog(self.sessionLog, f'Dataset cost: {(end_time - strat_time):.2f}s')
         
         
-    def RegisterEvaulationContentGts(self, path, mark, debug, gtListFile):        
-        PrintInfoLog(self.sessionLog, f'Find GTs for %s ...' % mark, end='\r')
-        start_time = time.time()  # Measure the end time for data loading
-        file_list_txt = list(Path(gtListFile).glob('*.txt'))
-        GTList = list()
-        for ii in range(len(file_list_txt)):
-            file_handle = open(file_list_txt[ii], 'r')
-            lines = file_handle.readlines()
-            for line in lines:
-                curt_line = line.split('@')
-                curt_data = curt_line[3].split('\n')[0]
-                GTList.append((curt_line[1], curt_line[2], curt_data))
-            file_handle.close()
-        PrintInfoLog(self.sessionLog, f'Find GTs for %s completed.' % mark)
+    # def RegisterEvaulationContentGts(self, path, mark, debug, gtListFile):        
+    #     PrintInfoLog(self.sessionLog, f'Find GTs for %s ...' % mark, end='\r')
+    #     start_time = time.time()  # Measure the end time for data loading
+    #     file_list_txt = list(Path(gtListFile).glob('*.txt'))
+    #     GTList = list()
+    #     for ii in range(len(file_list_txt)):
+    #         file_handle = open(file_list_txt[ii], 'r')
+    #         lines = file_handle.readlines()
+    #         for line in lines:
+    #             curt_line = line.split('@')
+    #             curt_data = curt_line[3].split('\n')[0]
+    #             GTList.append((curt_line[1], curt_line[2], curt_data))
+    #         file_handle.close()
+    #     PrintInfoLog(self.sessionLog, f'Find GTs for %s completed.' % mark)
         
         
-        if debug:
-            self.evalListLabel0, charList=GB2312CharMapper(targetTxtPath='../Scripts/EvalTxts/debug.txt')
-        else:
-            self.evalListLabel0, charList=GB2312CharMapper(targetTxtPath='../Scripts/EvalTxts/过秦论.txt')
-        self.evalContents = GenerateFontsFromOtts(chars=charList)
+    #     if debug:
+    #         self.evalListLabel0, charList=GB2312CharMapper(targetTxtPath='../Scripts/EvalTxts/debug.txt')
+    #     else:
+    #         self.evalListLabel0, charList=GB2312CharMapper(targetTxtPath='../Scripts/EvalTxts/过秦论.txt')
+    #     self.evalContents = GenerateFontsFromOtts(chars=charList)
         
-        PrintInfoLog(self.sessionLog, f'EvalExample Resigtration for %s ...' % mark, end='\r')
-        if self.config.debug:
-            self.evalContents = self.evalContents[:,0:5,:,:]
+    #     PrintInfoLog(self.sessionLog, f'EvalExample Resigtration for %s ...' % mark, end='\r')
+    #     if self.config.debug:
+    #         self.evalContents = self.evalContents[:,0:5,:,:]
             
-        cols, rows, h, w = self.evalContents.shape    # shape: (cols, rows, h, w)
-        # 1. Rearrange dimensions: (cols, rows, h, w) → (rows, h, cols, w)
-        grid = self.evalContents.permute(1, 2, 0, 3)   # (rows, h, cols, w)
+    #     cols, rows, h, w = self.evalContents.shape    # shape: (cols, rows, h, w)
+    #     # 1. Rearrange dimensions: (cols, rows, h, w) → (rows, h, cols, w)
+    #     grid = self.evalContents.permute(1, 2, 0, 3)   # (rows, h, cols, w)
 
-        # 2. Reshape into a large 2D tensor: (rows*h, cols*w)
+    #     # 2. Reshape into a large 2D tensor: (rows*h, cols*w)
+    #     bigImg = grid.reshape(rows * h, cols * w)
+
+    #     # 3. Invert (assuming pixel values in [0, 255])
+    #     bigImg = 255 - bigImg
+
+    #     # 4. Transpose for final display: (H, W) → (W, H)
+    #     bigImg = bigImg.T
+
+    #     # 5. Convert to uint8 numpy and save image
+    #     img = Image.fromarray(bigImg.cpu().numpy().astype('uint8'))
+    #     if mark == 'Train':
+    #         img.save(os.path.join(path, 'ExampleContents.png' ))
+            
+        
+            
+    #     # keep labels whose 0‑index and 1‑index lists are both non‑empty
+    #     self.evalStyleLabels = [label for label, sublists in self.styleFileDict.items() if all(sublists)]          # 保证现有的每个子列表都非空
+
+            
+    #     # Step 1: Create lookup dict {(label1, label0): (path, label0, label1)}
+    #     lookup = {
+    #         (int(l1), int(l0)): (p, int(l0), int(l1))
+    #         for l0, l1, p in GTList
+    #     }
+
+    #     # Step 2: Generate targetGts using int-normalized labels for lookup
+    #     targetGts = [
+    #         [lookup.get((int(label1), int(label0)), ('', int(label0), int(label1)))
+    #         for label0 in self.evalListLabel0]
+    #         for label1 in self.evalStyleLabels
+    #     ]
+        
+    #     self.evalGts = []
+    #     for gt in targetGts:
+    #         outTensorList=[]
+    #         for item in gt:
+    #             if item[0] != '':
+    #                 # Convert image and normalize to [-1, 1]
+    #                 img = cv2torch(item[0], transform=transformSingleContentGT)
+    #                 img = (img - 0.5) * 2
+    #             else:
+    #                 # Fill with +1 if item[0] is empty (i.e., missing image)
+    #                 img = torch.full((1, 64, 64), 1)
+
+    #             outTensorList.append(img)
+
+    #         # Concatenate all tensors along dim=0
+    #         outTensor = torch.cat(outTensorList, dim=0)
+    #         self.evalGts.append((outTensor,gt[0][2]))
+    #     end_time = time.time()  # Measure the end time for data loading
+    #     PrintInfoLog(self.sessionLog, f'EvalExample Resigtration completes for %s:{(end_time - start_time): .2f}s' % mark)
+    #     return img 
+    
+    
+    def RegisterEvaulationContentGts(self, path, mark, debug, gtListFile):
+        PrintInfoLog(self.sessionLog, f'Find GTs for %s ...' % mark, end='\r')
+        start_time = time.time()
+
+        # Load only the label pairs that are needed
+        if debug:
+            self.evalListLabel0, charList = GB2312CharMapper(targetTxtPath='../Scripts/EvalTxts/debug.txt')
+        else:
+            self.evalListLabel0, charList = GB2312CharMapper(targetTxtPath='../Scripts/EvalTxts/过秦论.txt')
+
+        self.evalContents = GenerateFontsFromOtts(chars=charList)
+        if self.config.debug:
+            self.evalContents = self.evalContents[:, 0:5, :, :]
+
+        # Construct the set of (label1, label0) pairs needed
+        self.evalStyleLabels = [label for label, sublists in self.styleFileDict.items() if all(sublists)]
+        required_pairs = set((int(l1), int(l0)) for l1 in self.evalStyleLabels for l0 in self.evalListLabel0)
+
+        # Step 1: Stream GT files and build filtered lookup table
+        lookup = dict()
+        for txt_path in Path(gtListFile).glob('*.txt'):
+            with open(txt_path, 'r') as f:
+                for line in f:
+                    parts = line.strip().split('@')
+                    if len(parts) < 4:
+                        continue
+                    l0, l1, p = int(parts[1]), int(parts[2]), parts[3]
+                    if (l1, l0) in required_pairs:
+                        lookup[(l1, l0)] = (p, l0, l1)
+
+        PrintInfoLog(self.sessionLog, f'Find GTs for %s completed.' % mark)
+
+        # Visual display grid
+        cols, rows, h, w = self.evalContents.shape
+        grid = self.evalContents.permute(1, 2, 0, 3)
         bigImg = grid.reshape(rows * h, cols * w)
-
-        # 3. Invert (assuming pixel values in [0, 255])
         bigImg = 255 - bigImg
-
-        # 4. Transpose for final display: (H, W) → (W, H)
         bigImg = bigImg.T
-
-        # 5. Convert to uint8 numpy and save image
         img = Image.fromarray(bigImg.cpu().numpy().astype('uint8'))
         if mark == 'Train':
-            img.save(os.path.join(path, 'ExampleContents.png' ))
-            
-        
-            
-        # keep labels whose 0‑index and 1‑index lists are both non‑empty
-        self.evalStyleLabels = [label for label, sublists in self.styleFileDict.items() if all(sublists)]          # 保证现有的每个子列表都非空
+            img.save(os.path.join(path, 'ExampleContents.png'))
 
-            
-        # Step 1: Create lookup dict {(label1, label0): (path, label0, label1)}
-        lookup = {
-            (int(l1), int(l0)): (p, int(l0), int(l1))
-            for l0, l1, p in GTList
-        }
-
-        # Step 2: Generate targetGts using int-normalized labels for lookup
+        # Step 2: Generate targetGts from lookup
         targetGts = [
             [lookup.get((int(label1), int(label0)), ('', int(label0), int(label1)))
             for label0 in self.evalListLabel0]
             for label1 in self.evalStyleLabels
         ]
-        
+
+        # Step 3: Convert targetGts into normalized image tensors
         self.evalGts = []
         for gt in targetGts:
-            outTensorList=[]
+            outTensorList = []
             for item in gt:
                 if item[0] != '':
-                    # Convert image and normalize to [-1, 1]
-                    img = cv2torch(item[0], transform=transformSingleContentGT)
-                    img = (img - 0.5) * 2
+                    img_tensor = cv2torch(item[0], transform=transformSingleContentGT)
+                    img_tensor = (img_tensor - 0.5) * 2
                 else:
-                    # Fill with +1 if item[0] is empty (i.e., missing image)
-                    img = torch.full((1, 64, 64), 1)
+                    img_tensor = torch.full((1, 64, 64), 1)
+                outTensorList.append(img_tensor)
 
-                outTensorList.append(img)
-
-            # Concatenate all tensors along dim=0
             outTensor = torch.cat(outTensorList, dim=0)
-            self.evalGts.append((outTensor,gt[0][2]))
-        end_time = time.time()  # Measure the end time for data loading
+            self.evalGts.append((outTensor, gt[0][2]))
+
+        end_time = time.time()
         PrintInfoLog(self.sessionLog, f'EvalExample Resigtration completes for %s:{(end_time - start_time): .2f}s' % mark)
-        return img 
-    
+        return img
+
         
     def ResetStyleList(self, epoch, mark):
         """

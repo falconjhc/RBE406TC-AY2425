@@ -346,9 +346,6 @@ class Trainer(nn.Module):
             self.writer.add_image("Image in Train", output, dataformats='CHW', global_step=step)
         elif 'Veryfing@' in mark:
             self.writer.add_image("Image in %s" % mark, output, dataformats='CHW', global_step=step)
-        
-
-
 
         # Write scalar losses to TensorBoard
         self.writer.add_scalar('01-LossGenerator/SumLossG-' + mark, lossG, global_step=step)
@@ -405,10 +402,10 @@ class Trainer(nn.Module):
             thisTrainGif = trainGits[selectedTrainIdx]
             thisTestGif = testGifs[selectedTestIdx]
             self.LogGifToTensorBoard(frames = thisTrainGif,
-                                     tag = 'Animations/Train Animations',
+                                     tag = 'Animations-Train/TrainAnimation',
                                      step=step)
             self.LogGifToTensorBoard(frames = thisTestGif,
-                                     tag = 'Animations/Test Animations',
+                                     tag = 'Animations-Test/TestAnimation',
                                      step=step)
             
             
@@ -448,7 +445,8 @@ class Trainer(nn.Module):
         fps = round(1000 / duration) * 3
         
         
-        
+        if len(frames)>1:
+            frames = frames[1:]
         tensor_frames = []
         for i, frame in enumerate(frames):
             frame_tensor = transforms.ToTensor()(frame)  # (C, H, W)
@@ -458,7 +456,7 @@ class Trainer(nn.Module):
             raise RuntimeError("No frames provided to log.")
 
         video_tensor = torch.stack(tensor_frames).unsqueeze(0)  # (1, T, C, H, W)
-        self.writer.add_video(tag, video_tensor, global_step=step, fps=fps)
+        self.writer.add_video(tag, video_tensor, global_step=0, fps=fps)
         
         
     def TrainOneEpoch(self, epoch):
@@ -545,7 +543,7 @@ class Trainer(nn.Module):
                 
                 self.optimizerG.step()
 
-            self.iters = self.iters+ 1  # Update iteration count
+            
 
             # Log and write summaries at regular intervals
             if (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader) - thisRoundStartItr1 > RECORD_PCTG//10 and epoch < START_TRAIN_EPOCHS) or \
@@ -553,7 +551,7 @@ class Trainer(nn.Module):
                 (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader) - thisRoundStartItr1 > RECORD_PCTG) or \
                 idx == 0 or idx == len(self.trainLoader) - 1:
                 if idx == 0 or idx == len(self.trainLoader) - 1 or (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader) - thisRoundStartItr2 > RECORD_PCTG):
-                    currentEpochFloat = (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader)  + epoch)/NUM_SAMPLE_PER_EPOCH
+                    currentEpochFloat = (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader)  + epoch*NUM_SAMPLE_PER_EPOCH)/NUM_SAMPLE_PER_EPOCH
                     trainGifs = self.TestWritingEssay(thisSet=self.trainset, epochFloat=currentEpochFloat, mark='TrainingSet')
                     testGifs = self.TestWritingEssay(thisSet=self.testSet,  epochFloat=currentEpochFloat, mark='TestingSet')
                     thisRoundStartItr2 = idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader)
@@ -563,7 +561,7 @@ class Trainer(nn.Module):
                                     step=epoch * NUM_SAMPLE_PER_EPOCH + int(idx / (len(self.trainLoader)) * NUM_SAMPLE_PER_EPOCH)+1,
                                     lossG=sumLossG, lossDict=Loss_dict, mark='Train',animations=[trainGifs,testGifs])
                 thisRoundStartItr1 = idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader)
-
+            self.iters = self.iters+ 1  # Update iteration count
         time2 = time()  # Track end time for the epoch
         PrintInfoLog(self.sessionLog, 'Training completed @ Epoch: %d/%d training time: %f mins, L1Loss: %.3f' % 
                      (epoch+1, self.config.trainParams.epochs, (time2-time1)/60, Loss_dict['lossL1']))  # Log epoch time and loss
