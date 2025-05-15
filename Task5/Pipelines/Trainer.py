@@ -345,9 +345,9 @@ class Trainer(nn.Module):
 
         # Write images to TensorBoard and disk
         if mark == 'Train':
-            self.writer.add_image("Image in Train", output, dataformats='CHW', global_step=step)
+            self.writer.add_image("Images-Train", output, dataformats='CHW', global_step=step)
         elif 'Veryfing@' in mark:
-            self.writer.add_image("Image in %s" % mark, output, dataformats='CHW', global_step=step)
+            self.writer.add_image("Images-%s" % mark, output, dataformats='CHW', global_step=step)
 
         # Write scalar losses to TensorBoard
         self.writer.add_scalar('02-LossReconstruction/L1-' + mark, lossDict['lossL1'], global_step=step)
@@ -493,6 +493,30 @@ class Trainer(nn.Module):
         
         for idx, (contents, styles, gt, onehotContent, onehotStyle) in trainProgress:
             
+            
+             # Log and write summaries at regular intervals
+            if (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader) - thisRoundStartItr1 > RECORD_PCTG//10 and epoch < START_TRAIN_EPOCHS) or \
+                (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader) - thisRoundStartItr1 > RECORD_PCTG//5 and epoch < INITIAL_TRAIN_EPOCHS) or \
+                (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader) - thisRoundStartItr1 > RECORD_PCTG) or \
+                idx == 0 or idx == len(self.trainLoader) - 1:
+                
+                animation = []
+                if (epoch < START_TRAIN_EPOCHS and \
+                    (idx == 0 or idx == len(self.trainLoader) - 1 or (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader) - thisRoundStartItr2 > RECORD_PCTG)))\
+                    or (epoch >= START_TRAIN_EPOCHS and idx == len(self.trainLoader) - 1) :
+                    currentEpochFloat = (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader)  + epoch*NUM_SAMPLE_PER_EPOCH)/NUM_SAMPLE_PER_EPOCH
+                    trainGifs = self.TestWritingEssay(thisSet=self.trainset, epochFloat=currentEpochFloat, mark='TrainingSet')
+                    testGifs = self.TestWritingEssay(thisSet=self.testSet,  epochFloat=currentEpochFloat, mark='TestingSet')
+                    animation=[trainGifs,testGifs]
+                    thisRoundStartItr2 = idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader)
+                
+                self.SummaryWriting(evalContents=contents, evalStyles=styles, evalGTs=gt, evalFakes=generated, epoch=epoch+1,
+                                    step=epoch * NUM_SAMPLE_PER_EPOCH + int(idx / (len(self.trainLoader)) * NUM_SAMPLE_PER_EPOCH)+1,
+                                    lossG=sumLossG, lossDict=Loss_dict, mark='Train',animations=animation)
+                thisRoundStartItr1 = idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader)
+                
+                
+            
             self.generator.train()  # Set the model to training mode
             
             # Move data to the GPU and require gradients
@@ -550,26 +574,7 @@ class Trainer(nn.Module):
 
             
 
-            # Log and write summaries at regular intervals
-            if (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader) - thisRoundStartItr1 > RECORD_PCTG//10 and epoch < START_TRAIN_EPOCHS) or \
-                (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader) - thisRoundStartItr1 > RECORD_PCTG//5 and epoch < INITIAL_TRAIN_EPOCHS) or \
-                (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader) - thisRoundStartItr1 > RECORD_PCTG) or \
-                idx == 0 or idx == len(self.trainLoader) - 1:
-                
-                animation = []
-                if (epoch < START_TRAIN_EPOCHS and \
-                    (idx == 0 or idx == len(self.trainLoader) - 1 or (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader) - thisRoundStartItr2 > RECORD_PCTG)))\
-                    or (epoch >= START_TRAIN_EPOCHS and idx == len(self.trainLoader) - 1) :
-                    currentEpochFloat = (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader)  + epoch*NUM_SAMPLE_PER_EPOCH)/NUM_SAMPLE_PER_EPOCH
-                    trainGifs = self.TestWritingEssay(thisSet=self.trainset, epochFloat=currentEpochFloat, mark='TrainingSet')
-                    testGifs = self.TestWritingEssay(thisSet=self.testSet,  epochFloat=currentEpochFloat, mark='TestingSet')
-                    animation=[trainGifs,testGifs]
-                    thisRoundStartItr2 = idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader)
-                
-                self.SummaryWriting(evalContents=contents, evalStyles=styles, evalGTs=gt, evalFakes=generated, epoch=epoch+1,
-                                    step=epoch * NUM_SAMPLE_PER_EPOCH + int(idx / (len(self.trainLoader)) * NUM_SAMPLE_PER_EPOCH)+1,
-                                    lossG=sumLossG, lossDict=Loss_dict, mark='Train',animations=animation)
-                thisRoundStartItr1 = idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader)
+           
             self.iters = self.iters+ 1  # Update iteration count
         time2 = time()  # Track end time for the epoch
         PrintInfoLog(self.sessionLog, 'Training completed @ Epoch: %d/%d training time: %f mins, L1Loss: %.3f' % 
