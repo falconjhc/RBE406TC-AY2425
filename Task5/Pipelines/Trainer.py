@@ -350,18 +350,20 @@ class Trainer(nn.Module):
             self.writer.add_image("Image in %s" % mark, output, dataformats='CHW', global_step=step)
 
         # Write scalar losses to TensorBoard
-        self.writer.add_scalar('01-LossGenerator/SumLossG-' + mark, lossG, global_step=step)
-        self.writer.add_scalar('01-LossReconstruction/L1-' + mark, lossDict['lossL1'], global_step=step)
-        self.writer.add_scalar('01-LossGenerator/ConstContentReal-' + mark, lossDict['lossConstContentReal'], global_step=step)
-        self.writer.add_scalar('01-LossGenerator/ConstStyleReal-' + mark, lossDict['lossConstStyleReal'], global_step=step)
-        self.writer.add_scalar('01-LossGenerator/ConstContentFake-' + mark, lossDict['lossConstContentFake'], global_step=step)
-        self.writer.add_scalar('01-LossGenerator/ConstStyleFake-' + mark, lossDict['lossConstStyleFake'], global_step=step)
-        self.writer.add_scalar('01-LossGenerator/CategoryRealContent-' + mark, lossDict['lossCategoryContentReal'], global_step=step)
-        self.writer.add_scalar('01-LossGenerator/CategoryFakeContent-' + mark, lossDict['lossCategoryContentFake'], global_step=step)
-        self.writer.add_scalar('01-LossGenerator/CategoryRealStyle-' + mark, lossDict['lossCategoryStyleReal'], global_step=step)
-        self.writer.add_scalar('01-LossGenerator/CategoryFakeStyle-' + mark, lossDict['lossCategoryStyleFake'], global_step=step)
-        self.writer.add_scalar('01-LossReconstruction/DeepPerceptualContentSum-' + mark, lossDict['deepPerceptualContent'], global_step=step)
-        self.writer.add_scalar('01-LossReconstruction/DeepPerceptualStyleSum-' + mark, lossDict['deepPerceptualStyle'], global_step=step)
+        self.writer.add_scalar('02-LossReconstruction/L1-' + mark, lossDict['lossL1'], global_step=step)
+        self.writer.add_scalar('02-LossReconstruction/DeepPerceptualContentSum-' + mark, lossDict['deepPerceptualContent'], global_step=step)
+        self.writer.add_scalar('02-LossReconstruction/DeepPerceptualStyleSum-' + mark, lossDict['deepPerceptualStyle'], global_step=step)
+        
+        self.writer.add_scalar('05-LossGenerator/SumLossG-' + mark, lossG, global_step=step)
+        self.writer.add_scalar('05-LossGenerator/ConstContentReal-' + mark, lossDict['lossConstContentReal'], global_step=step)
+        self.writer.add_scalar('05-LossGenerator/ConstStyleReal-' + mark, lossDict['lossConstStyleReal'], global_step=step)
+        self.writer.add_scalar('05-LossGenerator/ConstContentFake-' + mark, lossDict['lossConstContentFake'], global_step=step)
+        self.writer.add_scalar('05-LossGenerator/ConstStyleFake-' + mark, lossDict['lossConstStyleFake'], global_step=step)
+        self.writer.add_scalar('05-LossGenerator/CategoryRealContent-' + mark, lossDict['lossCategoryContentReal'], global_step=step)
+        self.writer.add_scalar('05-LossGenerator/CategoryFakeContent-' + mark, lossDict['lossCategoryContentFake'], global_step=step)
+        self.writer.add_scalar('05-LossGenerator/CategoryRealStyle-' + mark, lossDict['lossCategoryStyleReal'], global_step=step)
+        self.writer.add_scalar('05-LossGenerator/CategoryFakeStyle-' + mark, lossDict['lossCategoryStyleFake'], global_step=step)
+        
         
         
         if mark == 'Train':
@@ -375,11 +377,13 @@ class Trainer(nn.Module):
 
 
             # Log gradient norms to TensorBoard
-            self.writer.add_scalar('00-GradientCheck-G/00-MinGradThreshold', self.gradGNormScheduler.GetThreshold(), global_step=step)
+            self.writer.add_scalar('01-GradientCheck-G/00-MinGradThreshold', self.gradGNormScheduler.GetThreshold(), global_step=step)
+            self.writer.add_scalar('00-LR/LR-G', self.lrScheculerG.get_lr()[0], global_step=step)
+            self.writer.add_scalar('01-GradientCheck-G/00-MinGradThreshold', self.gradGNormScheduler.GetThreshold(), global_step=step)
             for idx1, (subName, subDict) in enumerate(self.gradG.items()):
                 for idx2, (layerName, value) in enumerate(self.gradG[subName].items()):
                     currentName = subName + '-' + layerName
-                    self.writer.add_scalar('00-GradientCheck-G/' + currentName, 
+                    self.writer.add_scalar('01-GradientCheck-G/' + currentName, 
                                            self.gradG[subName][layerName].value / self.gradG[subName][layerName].count * self.lrScheculerG.get_lr()[0], 
                                            global_step=step)
                     
@@ -389,20 +393,20 @@ class Trainer(nn.Module):
         if 'extractorContent' in self.config:
             for idx, thisContentExtractor in enumerate(self.config.extractorContent):
                 thisContentExtractorName = thisContentExtractor.name
-                self.writer.add_scalar('011-LossDeepPerceptual-ContentMSE-' + mark + '/' + thisContentExtractorName, lossDict['deepPerceptualContentList'][idx], global_step=step)
+                self.writer.add_scalar('03-LossDeepPerceptual-ContentMSE-' + mark + '/' + thisContentExtractorName, lossDict['deepPerceptualContentList'][idx], global_step=step)
 
         if 'extractorStyle' in self.config:
             for idx, thisStyleExtractor in enumerate(self.config.extractorStyle):
                 thisStyleExtractorName = thisStyleExtractor.name
-                self.writer.add_scalar('013-LossDeepPerceptual-StyleMSE-' + mark + '/' + thisStyleExtractorName, lossDict['deepPerceptualStyleList'][idx], global_step=step)
+                self.writer.add_scalar('04-LossDeepPerceptual-StyleMSE-' + mark + '/' + thisStyleExtractorName, lossDict['deepPerceptualStyleList'][idx], global_step=step)
 
         
         if len(animations)>0:
             trainGits, testGifs = animations
             selectedTrainIdx = random.randint(0, len(trainGits) - 1)
             selectedTestIdx = random.randint(0, len(testGifs) - 1)
-            thisTrainGif = trainGits[selectedTrainIdx]
-            thisTestGif = testGifs[selectedTestIdx]
+            thisTrainGif = trainGits[selectedTrainIdx][-NUM_FRAME_DISPLAY_IN_TB:]
+            thisTestGif = testGifs[selectedTestIdx][-NUM_FRAME_DISPLAY_IN_TB:]
             self.LogGifToTensorBoard(frames = thisTrainGif,
                                      tag = 'Animations-Train/TrainAnimation',
                                      step=step)
@@ -648,7 +652,7 @@ class Trainer(nn.Module):
             for style in thisSet.evalStyleLabels:
                 styleDir = Path(os.path.join(self.config.userInterface.trainImageDir, style.zfill(5)))
                 files = sorted((p for p in styleDir.rglob("*.png") if mark in p.name), 
-                               key=lambda p: p.stat().st_mtime)[-NUM_FRAME_DISPLAY_IN_TB:]  
+                               key=lambda p: p.stat().st_mtime) 
                 thisGif = MakeGifFromPngs(self.sessionLog, [str(p) for p in files],
                                           os.path.join(self.config.userInterface.trainImageDir, f"Style-{style.zfill(5)}-{mark}.gif"))
                 fullGifs.append(thisGif)
