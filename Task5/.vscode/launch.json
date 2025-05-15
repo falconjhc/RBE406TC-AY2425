@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "args": "--wnet Plain   --mixer MixerMaxRes3@3 --batchSize 7 --availableStyleNum 5 --epochs 11 --resumeTrain 0 --config debug  --device 1 --debug 1",
+            "args": "--wnet Plain   --mixer MixerMaxRes3@3 --batchSize 7 --availableStyleNum 5 --epochs 11 --resumeTrain 1 --config debug  --device 1 --debug 1",
             "env": {"CUDA_VISIBLE_DEVICES": "3",
 }
 

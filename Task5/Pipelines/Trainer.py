@@ -45,7 +45,9 @@ MIN_gradNorm = 0.1  # Minimum gradient norm threshold for clipping
 MAX_gradNorm = 1.0  # Maximum gradient norm threshold for clipping
 
 NUM_SAMPLE_PER_EPOCH = 1000  # Number of samples processed per epoch
-RECORD_PCTG = NUM_SAMPLE_PER_EPOCH / 5  # Percentage of samples to record during training
+NUM_RECORD_NORMAL = 3
+NUM_FRAME_DISPLAY_IN_TB = 5
+RECORD_PCTG = NUM_SAMPLE_PER_EPOCH / NUM_RECORD_NORMAL  # Percentage of samples to record during training
 eps = 1e-9  # Small value to avoid division by zero in calculations
 
 INITIAL_TRAIN_EPOCHS = 7  # Epoch threshold for transitioning augmentation methods
@@ -436,17 +438,16 @@ class Trainer(nn.Module):
         """
         
         
-        max_frames: int = 1000
         
         # get fps
         duration = frames[0].info.get("duration", 100)  # in milliseconds
         if duration <= 0:
             duration = 100  # fallback to avoid division by zero
-        fps = round(1000 / duration) * 3
+        fps = round(1000 / duration / 3) 
         
         
-        if len(frames)>1:
-            frames = frames[1:]
+        # if len(frames)>1:
+        #     frames = frames[1:]
         tensor_frames = []
         for i, frame in enumerate(frames):
             frame_tensor = transforms.ToTensor()(frame)  # (C, H, W)
@@ -550,16 +551,20 @@ class Trainer(nn.Module):
                 (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader) - thisRoundStartItr1 > RECORD_PCTG//5 and epoch < INITIAL_TRAIN_EPOCHS) or \
                 (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader) - thisRoundStartItr1 > RECORD_PCTG) or \
                 idx == 0 or idx == len(self.trainLoader) - 1:
-                if idx == 0 or idx == len(self.trainLoader) - 1 or (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader) - thisRoundStartItr2 > RECORD_PCTG):
+                
+                animation = []
+                if (epoch < START_TRAIN_EPOCHS and \
+                    (idx == 0 or idx == len(self.trainLoader) - 1 or (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader) - thisRoundStartItr2 > RECORD_PCTG)))\
+                    or (epoch >= START_TRAIN_EPOCHS and idx == len(self.trainLoader) - 1) :
                     currentEpochFloat = (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader)  + epoch*NUM_SAMPLE_PER_EPOCH)/NUM_SAMPLE_PER_EPOCH
                     trainGifs = self.TestWritingEssay(thisSet=self.trainset, epochFloat=currentEpochFloat, mark='TrainingSet')
                     testGifs = self.TestWritingEssay(thisSet=self.testSet,  epochFloat=currentEpochFloat, mark='TestingSet')
+                    animation=[trainGifs,testGifs]
                     thisRoundStartItr2 = idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader)
-
                 
                 self.SummaryWriting(evalContents=contents, evalStyles=styles, evalGTs=gt, evalFakes=generated, epoch=epoch+1,
                                     step=epoch * NUM_SAMPLE_PER_EPOCH + int(idx / (len(self.trainLoader)) * NUM_SAMPLE_PER_EPOCH)+1,
-                                    lossG=sumLossG, lossDict=Loss_dict, mark='Train',animations=[trainGifs,testGifs])
+                                    lossG=sumLossG, lossDict=Loss_dict, mark='Train',animations=animation)
                 thisRoundStartItr1 = idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader)
             self.iters = self.iters+ 1  # Update iteration count
         time2 = time()  # Track end time for the epoch
@@ -642,7 +647,8 @@ class Trainer(nn.Module):
             fullGifs = []
             for style in thisSet.evalStyleLabels:
                 styleDir = Path(os.path.join(self.config.userInterface.trainImageDir, style.zfill(5)))
-                files = sorted([p for p in styleDir.rglob("*.png") if mark in p.name], key=lambda p: p.stat().st_mtime)
+                files = sorted((p for p in styleDir.rglob("*.png") if mark in p.name), 
+                               key=lambda p: p.stat().st_mtime)[-NUM_FRAME_DISPLAY_IN_TB:]  
                 thisGif = MakeGifFromPngs(self.sessionLog, [str(p) for p in files],
                                           os.path.join(self.config.userInterface.trainImageDir, f"Style-{style.zfill(5)}-{mark}.gif"))
                 fullGifs.append(thisGif)

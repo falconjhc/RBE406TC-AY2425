@@ -5,7 +5,7 @@ dataPathRoot = '/data0/haochuan/'
 
 hyperParams = {
         'debugMode':1,
-        'expID':'Debug',# experiment name prefix
+        'expID':'Debug-Task5',# experiment name prefix
         'expDir': '/data-shared/server01/data1/haochuan/CharacterRecordsDebug/',
 
 
