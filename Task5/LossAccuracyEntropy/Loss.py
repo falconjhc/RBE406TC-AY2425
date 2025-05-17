@@ -276,9 +276,10 @@ class Loss(nn.Module):
                     'deepPerceptualContent': deepPerceptualContentSum,
                     'deepPerceptualStyle': deepPerceptualStyleSum,
                     'deepPerceptualContentList': contentMSEList,
-                    'deepPerceptualStyleList': styleMSEList}
+                    'deepPerceptualStyleList': styleMSEList,
+                    'sumLossG': sumLossG}
       
-        return sumLossG, lossDict
+        return lossDict
 
     def calculate_kl_divergence(self, vaeMeans, vaeLogVars):
         """

@@ -525,3 +525,16 @@ def MakeGifFromPngs(handler,
     )
     
     return frames
+
+
+def BaisedRandomK(K, N):
+    """
+    从 1 到 min(K, N) 中选择一个整数 n，
+    小值更可能被选中。
+    """
+    max_choice = min(K, N)
+    # 生成反比例权重，例如 [1/1, 1/2, ..., 1/max_choice]
+    weights = [1 / (i + 1) for i in range(max_choice)]
+    # 使用权重进行带偏采样
+    n = random.choices(range(1, max_choice + 1), weights=weights, k=1)[0]
+    return n

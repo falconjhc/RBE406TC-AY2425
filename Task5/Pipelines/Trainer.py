@@ -40,19 +40,15 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 # Constants for model training
-DISP_CONTENT_STYLE_NUM = 5  # Maximum number of content/style images to display during summary writing
 MIN_gradNorm = 0.1  # Minimum gradient norm threshold for clipping
 MAX_gradNorm = 1.0  # Maximum gradient norm threshold for clipping
 
-NUM_SAMPLE_PER_EPOCH = 1000  # Number of samples processed per epoch
-NUM_RECORD_NORMAL = 3
-NUM_FRAME_DISPLAY_IN_TB = 5
-RECORD_PCTG = NUM_SAMPLE_PER_EPOCH / NUM_RECORD_NORMAL  # Percentage of samples to record during training
+
 eps = 1e-9  # Small value to avoid division by zero in calculations
 
 INITIAL_TRAIN_EPOCHS = 7  # Epoch threshold for transitioning augmentation methods
 START_TRAIN_EPOCHS = 3  # Epoch after which simple augmentations start
-
+from Pipelines.LoggerTB import NUM_SAMPLE_PER_EPOCH
 
 sys.path.append('./')
 from Pipelines.DatasetWnet import CharacterDataset
@@ -62,10 +58,9 @@ from Tools.Utilities import Logging, PrintInfoLog
 from Tools.Utilities import SplitName
 
 from Pipelines.DatasetWnet import transformTrainZero, transformTrainMinor, transformTrainHalf, transformTrainFull, transformSingleContentGT
-from Tools.Utilities import cv2torch, TransformToDisplay
-from pathlib import Path
+from Tools.Utilities import BaisedRandomK
+from Pipelines.LoggerTB import TBLogger as Logger
 
-from Tools.Utilities import MakeGifFromPngs
 
 N_CRITIC = 5
 WARMUP_EPOCS = 1
@@ -145,7 +140,10 @@ class Trainer(nn.Module):
         
 
         # Initialize TensorBoard writer for tracking training progress
-        self.writer = SummaryWriter(self.config.userInterface.logDir)
+        writer = SummaryWriter(self.config.userInterface.logDir)
+        self.dispLogTrain = Logger(writer=writer, cfg=self.config)
+        self.dispLogVerifyTrain = Logger(writer=writer, cfg=self.config)
+        self.dispLogVerifyTest = Logger(writer=writer, cfg=self.config)
 
         # Configure logging to include timestamps (year, month, day, hour, minute, second)
         current_time = datetime.now().strftime('%Y-%m-%d-%H:%M:%S')
@@ -288,180 +286,6 @@ class Trainer(nn.Module):
         # Log that the trainer is ready
         PrintInfoLog(self.sessionLog, 'Trainer prepared.')
 
-    def ClearGradRecords(self):
-        """Reset gradient records to 0 for all layers."""
-        for idx1, (subName, subDict) in enumerate(self.gradG.items()):
-            for idx2, (key, value) in enumerate(self.gradG[subName].items()):
-                self.gradG[subName][key].value = 0.0
-                
-        for idx1, (subName, subDict) in enumerate(self.gradD.items()):
-            for idx2, (key, value) in enumerate(self.gradD[subName].items()):
-                self.gradD[subName][key].value = 0.0
-
-    def SummaryWriting(self, evalContents, evalStyles, evalGTs, evalFakes, epoch, step, 
-                       lossG, lossDict, mark='NA', animations=[]):
-        """
-        Write summaries to TensorBoard including images and scalar losses.
-
-        Args:
-            evalContents (Tensor): Content inputs.
-            evalStyles (Tensor): Style inputs.
-            evalGTs (Tensor): Ground truth images.
-            evalFakes (Tensor): Generated images.
-            step (int): Current step or epoch.
-            lossG (float): Generator loss.
-            lossDict (dict): Dictionary of individual loss components.
-            mark (str): Mark for identifying if it's 'Train' or 'Test' phase.
-        """
-        dispContentNum = min(DISP_CONTENT_STYLE_NUM, evalContents.shape[1])
-        dispStyleNum = min(DISP_CONTENT_STYLE_NUM, evalStyles.shape[1])
-        selectedContentIdx = random.sample(range(evalContents.shape[1]), dispContentNum)
-        selectedStyleIdx = random.sample(range(evalStyles.shape[1]), dispStyleNum)
-        outGrids = []
-
-        # Create image grids for TensorBoard display
-        B = evalContents.shape[0]
-        for bid in range(B):
-            fake = evalFakes[bid]
-            gt = evalGTs[bid]
-            difference = torch.abs(fake - gt)
-            contents = evalContents[bid][selectedContentIdx].unsqueeze(1)
-            styles = evalStyles[bid][selectedStyleIdx].unsqueeze(1)
-            outList = []
-            for x in contents:
-                outList.append(x)
-            outList.append(gt)
-            outList.append(difference)
-            outList.append(fake)
-            for x in styles:
-                outList.append(x)
-
-            outGrid = make_grid([x for x in outList], nrow=dispContentNum + dispStyleNum + 3, normalize=True, scale_each=True)
-            outGrids.append(outGrid)
-        output = make_grid(outGrids, nrow=1, normalize=True, scale_each=True)
-        tensor2Img = transforms.ToPILImage()
-        outImg = tensor2Img(output)
-        
-
-        # Write images to TensorBoard and disk
-        if mark == 'Train':
-            self.writer.add_image("Images-Train", output, dataformats='CHW', global_step=step)
-        elif 'Veryfing@' in mark:
-            self.writer.add_image("Images-%s" % mark, output, dataformats='CHW', global_step=step)
-
-        # Write scalar losses to TensorBoard
-        self.writer.add_scalar('02-LossReconstruction/L1-' + mark, lossDict['lossL1'], global_step=step)
-        self.writer.add_scalar('02-LossReconstruction/DeepPerceptualContentSum-' + mark, lossDict['deepPerceptualContent'], global_step=step)
-        self.writer.add_scalar('02-LossReconstruction/DeepPerceptualStyleSum-' + mark, lossDict['deepPerceptualStyle'], global_step=step)
-        
-        self.writer.add_scalar('05-LossGenerator/SumLossG-' + mark, lossG, global_step=step)
-        self.writer.add_scalar('05-LossGenerator/ConstContentReal-' + mark, lossDict['lossConstContentReal'], global_step=step)
-        self.writer.add_scalar('05-LossGenerator/ConstStyleReal-' + mark, lossDict['lossConstStyleReal'], global_step=step)
-        self.writer.add_scalar('05-LossGenerator/ConstContentFake-' + mark, lossDict['lossConstContentFake'], global_step=step)
-        self.writer.add_scalar('05-LossGenerator/ConstStyleFake-' + mark, lossDict['lossConstStyleFake'], global_step=step)
-        self.writer.add_scalar('05-LossGenerator/CategoryRealContent-' + mark, lossDict['lossCategoryContentReal'], global_step=step)
-        self.writer.add_scalar('05-LossGenerator/CategoryFakeContent-' + mark, lossDict['lossCategoryContentFake'], global_step=step)
-        self.writer.add_scalar('05-LossGenerator/CategoryRealStyle-' + mark, lossDict['lossCategoryStyleReal'], global_step=step)
-        self.writer.add_scalar('05-LossGenerator/CategoryFakeStyle-' + mark, lossDict['lossCategoryStyleFake'], global_step=step)
-        
-        
-        
-        if mark == 'Train':
-            # Clear previous gradient records
-            self.ClearGradRecords()
-            for idx, (name, param) in enumerate(self.generator.named_parameters()):
-                if param.grad is not None:
-                    subName, layerName = name.split('.')[0], name.split('.')[1]
-                    self.gradG[subName][layerName].value = self.gradG[subName][layerName].value + torch.norm(param.grad)
-                    
-
-
-            # Log gradient norms to TensorBoard
-            self.writer.add_scalar('01-GradientCheck-G/00-MinGradThreshold', self.gradGNormScheduler.GetThreshold(), global_step=step)
-            self.writer.add_scalar('00-LR/LR-G', self.lrScheculerG.get_lr()[0], global_step=step)
-            self.writer.add_scalar('01-GradientCheck-G/00-MinGradThreshold', self.gradGNormScheduler.GetThreshold(), global_step=step)
-            for idx1, (subName, subDict) in enumerate(self.gradG.items()):
-                for idx2, (layerName, value) in enumerate(self.gradG[subName].items()):
-                    currentName = subName + '-' + layerName
-                    self.writer.add_scalar('01-GradientCheck-G/' + currentName, 
-                                           self.gradG[subName][layerName].value / self.gradG[subName][layerName].count * self.lrScheculerG.get_lr()[0], 
-                                           global_step=step)
-                    
-            
-
-        # Log deep perceptual loss if extractors are used
-        if 'extractorContent' in self.config:
-            for idx, thisContentExtractor in enumerate(self.config.extractorContent):
-                thisContentExtractorName = thisContentExtractor.name
-                self.writer.add_scalar('03-LossDeepPerceptual-ContentMSE-' + mark + '/' + thisContentExtractorName, lossDict['deepPerceptualContentList'][idx], global_step=step)
-
-        if 'extractorStyle' in self.config:
-            for idx, thisStyleExtractor in enumerate(self.config.extractorStyle):
-                thisStyleExtractorName = thisStyleExtractor.name
-                self.writer.add_scalar('04-LossDeepPerceptual-StyleMSE-' + mark + '/' + thisStyleExtractorName, lossDict['deepPerceptualStyleList'][idx], global_step=step)
-
-        
-        if len(animations)>0:
-            trainGits, testGifs = animations
-            selectedTrainIdx = random.randint(0, len(trainGits) - 1)
-            selectedTestIdx = random.randint(0, len(testGifs) - 1)
-            thisTrainGif = trainGits[selectedTrainIdx][-NUM_FRAME_DISPLAY_IN_TB:]
-            thisTestGif = testGifs[selectedTestIdx][-NUM_FRAME_DISPLAY_IN_TB:]
-            self.LogGifToTensorBoard(frames = thisTrainGif,
-                                     tag = 'Animations-Train/TrainAnimation',
-                                     step=step)
-            self.LogGifToTensorBoard(frames = thisTestGif,
-                                     tag = 'Animations-Test/TestAnimation',
-                                     step=step)
-            
-            
-        
-        self.trainStart = time()  # Log the time when training starts
-        self.writer.flush()
-        
-    def LogGifToTensorBoard(self,
-                            frames: List[Image.Image], 
-                            tag: str = "gif_display", 
-                            step: int = 0):
-        """
-        Logs a list of PIL.Image frames (from a generated GIF) as a video to TensorBoard.
-
-        Parameters:
-        -----------
-        frames : list[PIL.Image.Image]
-            List of frames (RGB PIL images).
-        writer : SummaryWriter
-            TensorBoard SummaryWriter instance.
-        tag : str
-            Tag used for logging.
-        step : int
-            Global step index for TensorBoard.
-        max_frames : int
-            Maximum number of frames to log.
-
-        """
-        
-        
-        
-        # get fps
-        duration = frames[0].info.get("duration", 100)  # in milliseconds
-        if duration <= 0:
-            duration = 100  # fallback to avoid division by zero
-        fps = round(1000 / duration / 3) 
-        
-        
-        # if len(frames)>1:
-        #     frames = frames[1:]
-        tensor_frames = []
-        for i, frame in enumerate(frames):
-            frame_tensor = transforms.ToTensor()(frame)  # (C, H, W)
-            tensor_frames.append(frame_tensor)
-
-        if not tensor_frames:
-            raise RuntimeError("No frames provided to log.")
-
-        video_tensor = torch.stack(tensor_frames).unsqueeze(0)  # (1, T, C, H, W)
-        self.writer.add_video(tag, video_tensor, global_step=step, fps=fps)
         
         
     def TrainOneEpoch(self, epoch):
@@ -493,7 +317,6 @@ class Trainer(nn.Module):
         
         for idx, (contents, styles, gt, onehotContent, onehotStyle) in trainProgress:
                 
-            
             self.generator.train()  # Set the model to training mode
             
             # Move data to the GPU and require gradients
@@ -518,9 +341,9 @@ class Trainer(nn.Module):
 
             # with autocast():
             # Compute the total generator loss and detailed loss breakdown
-            sumLossG, Loss_dict = self.sumLoss(epoch, lossInputs, 
-                                                         SplitName(self.config.generator.mixer)[1:-1],
-                                                         mode='Train')
+            dictLosses = self.sumLoss(epoch, lossInputs, 
+                                     SplitName(self.config.generator.mixer)[1:-1],
+                                     mode='Train')
         
 
             # Update the progress bar with the current loss
@@ -529,11 +352,11 @@ class Trainer(nn.Module):
             dispID = dispID.replace('Mixer','M')
             dispID = dispID.replace('Decoder','D')
             trainProgress.set_description(dispID + " Training @ Epoch: %d/%d, LossL1: %.3f" %
-                                          (epoch+1, self.config.trainParams.epochs, Loss_dict['lossL1']), refresh=True)
+                                          (epoch+1, self.config.trainParams.epochs, dictLosses['lossL1']), refresh=True)
 
             
             self.optimizerG.zero_grad()
-            sumLossG.backward()  # Compute gradients
+            dictLosses['sumLossG'].backward()  # Compute gradients
         
             # Gradient norm clipping and adjustment (if enabled)
             if self.config.trainParams.gradientNorm:
@@ -551,114 +374,49 @@ class Trainer(nn.Module):
 
             
             # Log and write summaries at regular intervals
-            if (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader) - thisRoundStartItr1 > RECORD_PCTG//10 and epoch < START_TRAIN_EPOCHS) or \
-                (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader) - thisRoundStartItr1 > RECORD_PCTG//5 and epoch < INITIAL_TRAIN_EPOCHS) or \
-                (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader) - thisRoundStartItr1 > RECORD_PCTG) or \
-                idx == 0 or idx == len(self.trainLoader) - 1:
+            need_sum, need_essay, progress = self.dispLogTrain.ShouldWriteSummaryTrain(
+                    idx                 = idx,
+                    epoch               = epoch,
+                    dataset_len         = len(self.trainset),
+                    batch_size          = self.config.trainParams.batchSize,
+                    last_summary_prog   = thisRoundStartItr1,
+                    last_anim_prog      = thisRoundStartItr2,
+                )
+            
+            if need_sum:
+                essay_imgs = []
+                current_epoch_float = (progress + epoch * NUM_SAMPLE_PER_EPOCH) / NUM_SAMPLE_PER_EPOCH
+                if need_essay:
+                    trainEssay = self.dispLogTrain.WritingEssay(self.trainset, current_epoch_float, 'TrainingSet', self.generator)
+                    testEssay  = self.dispLogTrain.WritingEssay(self.testSet,  current_epoch_float, 'TestingSet',  self.generator)
+                    essay_imgs = [trainEssay, testEssay]
+                    thisRoundStartItr2 = progress       # 更新动画节奏
+                    # print("needAnimation:%f"%current_epoch_float)
+            
+                self.dispLogTrain.Write2TB(
+                    generator=self.generator,
+                    eval_contents=contents,
+                    eval_styles=styles,
+                    eval_gts=gt,
+                    eval_fakes=generated,
+                    step=epoch * NUM_SAMPLE_PER_EPOCH + int(idx / (len(self.trainLoader)) * NUM_SAMPLE_PER_EPOCH)+1,
+                    mark='Train',
+                    loss_dict=dictLosses,
+                    grad_g=self.gradG,
+                    lr_g=self.lrScheculerG.get_lr()[0], 
+                    grad_thresh=self.gradGNormScheduler.GetThreshold(),
+                    essay_img = essay_imgs
+                )
+                # print("needSummary:%f"%current_epoch_float)
                 
-                animation = []
-                if (epoch < START_TRAIN_EPOCHS and \
-                    (idx == 0 or idx == len(self.trainLoader) - 1 or (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader) - thisRoundStartItr2 > RECORD_PCTG)))\
-                    or (epoch >= START_TRAIN_EPOCHS and idx == len(self.trainLoader) - 1) :
-                    currentEpochFloat = (idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader)  + epoch*NUM_SAMPLE_PER_EPOCH)/NUM_SAMPLE_PER_EPOCH
-                    trainGifs = self.TestWritingEssay(thisSet=self.trainset, epochFloat=currentEpochFloat, mark='TrainingSet')
-                    testGifs = self.TestWritingEssay(thisSet=self.testSet,  epochFloat=currentEpochFloat, mark='TestingSet')
-                    animation=[trainGifs,testGifs]
-                    thisRoundStartItr2 = idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader)
-                
-                self.SummaryWriting(evalContents=contents, evalStyles=styles, evalGTs=gt, evalFakes=generated, epoch=epoch+1,
-                                    step=epoch * NUM_SAMPLE_PER_EPOCH + int(idx / (len(self.trainLoader)) * NUM_SAMPLE_PER_EPOCH)+1,
-                                    lossG=sumLossG, lossDict=Loss_dict, mark='Train',animations=animation)
                 thisRoundStartItr1 = idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader)
-           
+                # thisRoundStartItr1 = progress
+                
             self.iters = self.iters+ 1  # Update iteration count
         time2 = time()  # Track end time for the epoch
         PrintInfoLog(self.sessionLog, 'Training completed @ Epoch: %d/%d training time: %f mins, L1Loss: %.3f' % 
-                     (epoch+1, self.config.trainParams.epochs, (time2-time1)/60, Loss_dict['lossL1']))  # Log epoch time and loss
+                     (epoch+1, self.config.trainParams.epochs, (time2-time1)/60, dictLosses['lossL1']))  # Log epoch time and loss
 
-    def TestWritingEssay(self, thisSet, epochFloat, mark):
-        is_train = False
-        self.generator.eval()
-
-        with torch.no_grad():
-            batch_size = self.config.trainParams.batchSize
-            K = self.config.datasetConfig.availableStyleNum
-
-            # Trim and split evaluation content into batches
-            fullEval = thisSet.evalContents
-            fullSize = (fullEval.shape[0] // batch_size) * batch_size
-            trimmedEval = fullEval[:fullSize].float().cuda()
-            evalContentBatches = list(torch.split(trimmedEval, batch_size, dim=0))
-
-            # Handle remainder (last partial batch)
-            remainder = fullEval[fullSize:]
-            if remainder.shape[0] > 0:
-                evalContentBatches.append(remainder.float().cuda())
-
-            fullGenerated = []
-
-            for idx1, evalStyleLabel in enumerate(thisSet.evalStyleLabels):
-                # Flatten style paths
-                styleData = thisSet.styleFileDict[evalStyleLabel]
-                stylePaths = [p for group in styleData for p in group]
-
-                # Randomly sample K styles with or without replacement
-                n = self.BaisedRandomK(K, len(stylePaths))
-                sampled = random.sample(stylePaths, n)
-                finalStyles = sampled + random.choices(sampled, k=K - n) if n < K else sampled
-
-                # Load and normalize style images
-                styleImgCat = torch.cat([
-                    (cv2torch(p, transform=transformSingleContentGT) - 0.5) * 2 for p in finalStyles
-                ], dim=0).float().cuda()
-
-                thisStyleGenerated = []
-                for contentBatch in evalContentBatches:
-                    styleExpanded = styleImgCat.unsqueeze(0).repeat(contentBatch.shape[0], 1, 1, 1)
-                    blankGT = torch.zeros(contentBatch.shape[0], 1, 64, 64).float().cuda()
-                    genBatch = self.generator(contentBatch, styleExpanded.reshape(-1, 1, 64, 64), blankGT, is_train)[4]
-                    thisStyleGenerated.append(genBatch)
-
-                thisStyleGenerated = torch.cat(thisStyleGenerated, dim=0)
-                fullGenerated.append(thisStyleGenerated)
-
-                # Create side-by-side comparison with ground truth
-                fakeDisplay = TransformToDisplay(thisStyleGenerated)
-                realDisplay = TransformToDisplay(thisSet.evalGts[idx1][0])
-                separator = Image.new("RGB", (3, fakeDisplay.height), (0, 0, 0))
-
-                combined = Image.new("RGB", (fakeDisplay.width + 3 + realDisplay.width, fakeDisplay.height))
-                combined.paste(fakeDisplay, (0, 0))
-                combined.paste(separator, (fakeDisplay.width, 0))
-                combined.paste(realDisplay, (fakeDisplay.width + 3, 0))
-
-                # Add bottom-right text
-                draw = ImageDraw.Draw(combined)
-                font = ImageFont.load_default()
-                text = f"Font {evalStyleLabel} Generated & GT @ Epoch {epochFloat:06.2f}"
-                bbox = draw.textbbox((0, 0), text, font=font)
-                text_width = bbox[2] - bbox[0]
-                text_height = bbox[3] - bbox[1]
-                x = combined.width - text_width - 10
-                y = combined.height - text_height - 10
-                draw.text((x, y), text, font=font, fill=(0, 0, 0))
-
-                # Save image
-                savePath = os.path.join(self.config.userInterface.trainImageDir, evalStyleLabel.zfill(5))
-                os.makedirs(savePath, exist_ok=True)
-                combined.save(os.path.join(savePath, f"{mark}-Epoch-{epochFloat:06.2f}.png"))
-
-            # Create GIFs from saved images per style
-            fullGifs = []
-            for style in thisSet.evalStyleLabels:
-                styleDir = Path(os.path.join(self.config.userInterface.trainImageDir, style.zfill(5)))
-                files = sorted((p for p in styleDir.rglob("*.png") if mark in p.name), 
-                               key=lambda p: p.stat().st_mtime) 
-                thisGif = MakeGifFromPngs(self.sessionLog, [str(p) for p in files],
-                                          os.path.join(self.config.userInterface.trainImageDir, f"Style-{style.zfill(5)}-{mark}.gif"))
-                fullGifs.append(thisGif)
-            return fullGifs
-    
     
     def TestOneEpoch(self, epoch, thisSet, mark):
         thisSet, thisLoader = self.ResetDataLoader(epoch = epoch+1, 
@@ -701,8 +459,8 @@ class Trainer(nn.Module):
                 
                 
                 # with autocast():
-                sumLossG, Loss_dict = self.sumLoss(epoch, lossInputs,
-                                                                SplitName(self.config.generator.mixer)[1:-1], mode=mark)
+                dictLosses = self.sumLoss(epoch, lossInputs,
+                                          SplitName(self.config.generator.mixer)[1:-1], mode=mark)
 
                 
                 # Update progress bar with current loss
@@ -711,20 +469,33 @@ class Trainer(nn.Module):
                 dispID = dispID.replace('Mixer','M')
                 dispID = dispID.replace('Decoder','D')
                 testProgress.set_description(dispID + " Verifying at %s @ Epoch: %d/%d, LossL1: %.3f" %
-                                                (mark, epoch+1, self.config.trainParams.epochs, Loss_dict['lossL1']), refresh=True)
+                                                (mark, epoch+1, self.config.trainParams.epochs, dictLosses['lossL1']), refresh=True)
 
-                # Write summaries at regular intervals
-                if (idx * float(NUM_SAMPLE_PER_EPOCH) / len(thisLoader) - thisRoundStartItr1 > RECORD_PCTG and epoch < START_TRAIN_EPOCHS) or \
-                    (idx * float(NUM_SAMPLE_PER_EPOCH) / len(thisLoader) - thisRoundStartItr1 > RECORD_PCTG*2) or \
-                    idx == 0 or idx == len(thisLoader) - 1:
+                # # Write summaries at regular intervals
+                if 'Test' in mark:
+                    thisLogger = self.dispLogVerifyTest
+                elif 'Train' in mark:
+                    thisLogger = self.dispLogVerifyTrain
+                need_sum, progress = thisLogger.ShouldWriteSummaryTest(
+                            idx                 = idx,
+                            epoch               = epoch,
+                            dataset_len         = len(thisSet),     # 或者你已有的变量
+                            batch_size          = self.config.trainParams.batchSize,
+                            last_summary_prog   = thisRoundStartItr1,
+                        )
+                
+                if need_sum:
+                    thisLogger.Write2TB(generator=self.generator, 
+                        eval_contents=contents,eval_styles=styles,eval_gts=gt,eval_fakes=generated,
+                                    step=epoch * NUM_SAMPLE_PER_EPOCH + int(idx / len(thisLoader) * NUM_SAMPLE_PER_EPOCH)+1,
+                                    mark="Verifying@"+mark,
+                                    loss_dict=dictLosses)
                     thisRoundStartItr1 = idx * float(NUM_SAMPLE_PER_EPOCH) / len(thisLoader)
-                    self.SummaryWriting(evalContents=contents, evalStyles=styles, evalGTs=gt, evalFakes=generated,epoch=epoch+1,
-                                        step=epoch * NUM_SAMPLE_PER_EPOCH + int(idx / len(thisLoader) * NUM_SAMPLE_PER_EPOCH)+1,
-                                        lossG=sumLossG, lossDict=Loss_dict, mark='Veryfing@'+mark)
+                    # thisRoundStartItr1 = progress
 
         time2 = time()  # Track end time for the epoch
         PrintInfoLog(self.sessionLog, 'Verifying completed @ %s @ Epoch: %d/%d verifying time: %f mins, L1Loss: %.3f' % 
-                     (mark, epoch+1, self.config.trainParams.epochs, (time2-time1)/60, Loss_dict['lossL1']))  # Log epoch time and loss
+                     (mark, epoch+1, self.config.trainParams.epochs, (time2-time1)/60, dictLosses['lossL1']))  # Log epoch time and loss
 
     def Pipelines(self):
         """Main training and evaluation loop."""
@@ -733,8 +504,6 @@ class Trainer(nn.Module):
         PrintInfoLog(self.sessionLog, self.separator)
         
         
-        # self.TestOneEpoch(self.startEpoch-1, thisSet=self.trainset, mark='TrainingSet')  # Test at the start if not skipping   
-        # self.TestOneEpoch(self.startEpoch-1, thisSet=self.testSet,  mark='TestingSet')  # Test at the start if not skipping    
         if (not self.config.userInterface.skipTest) and self.startEpoch != 0:
             self.TestOneEpoch(self.startEpoch-1, thisSet=self.trainset, mark='TrainingSet')  # Test at the start if not skipping   
             self.TestOneEpoch(self.startEpoch-1, thisSet=self.testSet,  mark='TestingSet')  # Test at the start if not skipping     
@@ -773,24 +542,7 @@ class Trainer(nn.Module):
         training_time = (train_end - train_start) / 3600  # Convert total training time to hours
         self.writer.close()  # Close the TensorBoard writer
         logging.info('Training finished, tensorboardX writer closed')
-        logging.info('Training total time: %f hours.' % training_time)
-        
-        
-
-    
-    
-    def BaisedRandomK(self, K, N):
-        """
-        从 1 到 min(K, N) 中选择一个整数 n，
-        小值更可能被选中。
-        """
-        max_choice = min(K, N)
-        # 生成反比例权重，例如 [1/1, 1/2, ..., 1/max_choice]
-        weights = [1 / (i + 1) for i in range(max_choice)]
-        # 使用权重进行带偏采样
-        n = random.choices(range(1, max_choice + 1), weights=weights, k=1)[0]
-        return n
-        
+        logging.info('Training total time: %f hours.' % training_time)    
         
     def ResetDataLoader(self, epoch, thisSet, info, mark, isTrain):
         """
@@ -821,7 +573,7 @@ class Trainer(nn.Module):
                 thisSet.styleList.append([])  # 无可选项则为空
                 continue
             
-            n = self.BaisedRandomK(K, len(styles))
+            n = BaisedRandomK(K, len(styles))
             sampled = random.sample(styles, n)
             
             # 若不够 K，则从 sampled 中有放回采样补齐
