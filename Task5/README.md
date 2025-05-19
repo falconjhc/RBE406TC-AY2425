@@ -5,7 +5,7 @@ First of all, Pytorch is not that easy to be used: particularly in the scenario 
 This repository contains the implementation of the Generalised WNet, which is a transplanted source code repository from [GeneralizedWNet-Tensorflow1.x](https://github.com/falconjhc/GeneralizedWNet-Tensorflow1.x).
 
 
-![Generation Process with VAE+GAN](Style-00005-TrainingSet.gif)
+![Generation Process with VAE+GAN](Style-00007-TrainingSet)
 
 
 
@@ -15,7 +15,7 @@ To set up the environment, you can create a Conda environment and install the re
 
 1. **Create a Conda Environment:**
 ```bash
-conda create -n pytorch-character python=3.10
+conda create -n pytorch-character python=3.11
 ```
    
 2. **Activate the Conda Environment:**

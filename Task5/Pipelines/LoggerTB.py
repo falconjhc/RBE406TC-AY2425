@@ -11,7 +11,7 @@ import torchvision.transforms as transforms
 from Tools.Utilities import cv2torch, TransformToDisplay
 from Pipelines.DatasetWnet import transformTrainZero, transformTrainMinor, transformTrainHalf, transformTrainFull, transformSingleContentGT
 from PIL import Image, ImageDraw, ImageFont
-from Tools.Utilities import BaisedRandomK
+from Tools.Utilities import BaisedRandomK,MakeGifFromPngs
 import math
 from typing import Tuple
 
@@ -26,30 +26,17 @@ from Pipelines.Trainer import START_TRAIN_EPOCHS,INITIAL_TRAIN_EPOCHS
 
 # -------------------------------------------------------------------------
 
-class TBLogger:
-    """
-    Small helper that dumps *all* TensorBoard summaries with the
-    original tag names you used earlier.
-    """
-
-    # ──────────────────────────────────────────────────────────────────
-    def __init__(self,
-                 writer,                       # SummaryWriter (already created in Trainer)
-                 cfg):
-        self.writer   = writer
-        self.cfg      = cfg
-        self.to_pil   = T.ToPILImage()
-
     
 
 class TBLogger:
     
     def __init__(self,
                  writer,                       # SummaryWriter (already created in Trainer)
-                 cfg):
+                 cfg,sessionLog):
         self.writer   = writer
         self.cfg      = cfg
         self.to_pil   = T.ToPILImage()
+        self.sessionLog = sessionLog
 
     # ===============================================================
     # 仅做决策，不负责真正写 TensorBoard
@@ -332,4 +319,12 @@ class TBLogger:
                 os.makedirs(save_path, exist_ok=True)
                 combined.save(os.path.join(save_path, f"{mark}-Epoch-{epoch_float:06.2f}.png"))
 
+            # Create GIFs from saved images per style
+            for style in this_set.evalStyleLabels:
+                styleDir = Path(os.path.join(self.cfg.userInterface.trainImageDir, style.zfill(5)))
+                files = sorted((p for p in styleDir.rglob("*.png") if mark in p.name), 
+                                key=lambda p: p.stat().st_mtime)
+                MakeGifFromPngs(self.sessionLog, [str(p) for p in files],
+                                os.path.join(self.cfg.userInterface.trainImageDir, f"Style-{style.zfill(5)}-{mark}.gif"))
+            
             return combined

@@ -139,11 +139,16 @@ class Trainer(nn.Module):
         os.makedirs(self.config.userInterface.expDir+'/Frameworks', exist_ok=True)
         
 
+        # Create console handler to display logs in the terminal
+        self.sessionLog = Logging(sys.stdout)
+        self.sessionLog.terminator = ''  # Prevent automatic newline in log output
+        logging.getLogger().addHandler(self.sessionLog)
+        
         # Initialize TensorBoard writer for tracking training progress
         writer = SummaryWriter(self.config.userInterface.logDir)
-        self.dispLogTrain = Logger(writer=writer, cfg=self.config)
-        self.dispLogVerifyTrain = Logger(writer=writer, cfg=self.config)
-        self.dispLogVerifyTest = Logger(writer=writer, cfg=self.config)
+        self.dispLogTrain = Logger(writer=writer, cfg=self.config, sessionLog=self.sessionLog)
+        self.dispLogVerifyTrain = Logger(writer=writer, cfg=self.config, sessionLog=self.sessionLog)
+        self.dispLogVerifyTest = Logger(writer=writer, cfg=self.config, sessionLog=self.sessionLog)
 
         # Configure logging to include timestamps (year, month, day, hour, minute, second)
         current_time = datetime.now().strftime('%Y-%m-%d-%H:%M:%S')
@@ -152,10 +157,6 @@ class Trainer(nn.Module):
                             format='[%(asctime)s.%(msecs)03d] %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S')
 
-        # Create console handler to display logs in the terminal
-        self.sessionLog = Logging(sys.stdout)
-        self.sessionLog.terminator = ''  # Prevent automatic newline in log output
-        logging.getLogger().addHandler(self.sessionLog)
 
         # Data augmentation strategy based on the configuration
         self.augmentationApproach = DataAugmentationMode[self.config.datasetConfig.augmentation]
@@ -391,7 +392,6 @@ class Trainer(nn.Module):
                     testEssay  = self.dispLogTrain.WritingEssay(self.testSet,  current_epoch_float, 'TestingSet',  self.generator)
                     essay_imgs = [trainEssay, testEssay]
                     thisRoundStartItr2 = progress       # 更新动画节奏
-                    # print("needAnimation:%f"%current_epoch_float)
             
                 self.dispLogTrain.Write2TB(
                     generator=self.generator,
@@ -407,10 +407,9 @@ class Trainer(nn.Module):
                     grad_thresh=self.gradGNormScheduler.GetThreshold(),
                     essay_img = essay_imgs
                 )
-                # print("needSummary:%f"%current_epoch_float)
                 
-                thisRoundStartItr1 = idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader)
-                # thisRoundStartItr1 = progress
+                # thisRoundStartItr1 = idx * float(NUM_SAMPLE_PER_EPOCH) / len(self.trainLoader)
+                thisRoundStartItr1 = progress
                 
             self.iters = self.iters+ 1  # Update iteration count
         time2 = time()  # Track end time for the epoch
@@ -490,8 +489,8 @@ class Trainer(nn.Module):
                                     step=epoch * NUM_SAMPLE_PER_EPOCH + int(idx / len(thisLoader) * NUM_SAMPLE_PER_EPOCH)+1,
                                     mark="Verifying@"+mark,
                                     loss_dict=dictLosses)
-                    thisRoundStartItr1 = idx * float(NUM_SAMPLE_PER_EPOCH) / len(thisLoader)
-                    # thisRoundStartItr1 = progress
+                    # thisRoundStartItr1 = idx * float(NUM_SAMPLE_PER_EPOCH) / len(thisLoader)
+                    thisRoundStartItr1 = progress
 
         time2 = time()  # Track end time for the epoch
         PrintInfoLog(self.sessionLog, 'Verifying completed @ %s @ Epoch: %d/%d verifying time: %f mins, L1Loss: %.3f' % 
@@ -540,7 +539,7 @@ class Trainer(nn.Module):
         # After training, log the total time taken and close the TensorBoard writer
         train_end = time()  # Record the end time of training
         training_time = (train_end - train_start) / 3600  # Convert total training time to hours
-        self.writer.close()  # Close the TensorBoard writer
+        self.dispLogTrain.writer.close()  # Close the TensorBoard writer
         logging.info('Training finished, tensorboardX writer closed')
         logging.info('Training total time: %f hours.' % training_time)    
         
