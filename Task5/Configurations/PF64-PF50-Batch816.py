@@ -4,8 +4,8 @@ dataPathRoot = '/data0/haochuan/'
 
 hyperParams = {
         'debugMode':1,
-        'expID':'20250519PF-Batch816-Task5',# experiment name prefix
-        'expDir': '/data-shared/server01/data1/haochuan/CharacterRecords2025May07-TestRenameTB/',
+        'expID':'20250520PF-Batch816-Task5',# experiment name prefix
+        'expDir': '/data-shared/server01/data1/haochuan/CharacterRecords2025May08/',
         
         'YamlPackage': '../YamlLists/PF64-PF80/',
         

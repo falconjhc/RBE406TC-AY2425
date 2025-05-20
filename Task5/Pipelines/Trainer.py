@@ -391,7 +391,7 @@ class Trainer(nn.Module):
                     trainEssay = self.dispLogTrain.WritingEssay(self.trainset, current_epoch_float, 'TrainingSet', self.generator)
                     testEssay  = self.dispLogTrain.WritingEssay(self.testSet,  current_epoch_float, 'TestingSet',  self.generator)
                     essay_imgs = [trainEssay, testEssay]
-                    thisRoundStartItr2 = progress       # 更新动画节奏
+                    thisRoundStartItr2 = progress       # animation update
             
                 self.dispLogTrain.Write2TB(
                     generator=self.generator,
