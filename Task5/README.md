@@ -5,8 +5,8 @@ First of all, Pytorch is not that easy to be used: particularly in the scenario 
 This repository contains the implementation of the Generalised WNet, which is a transplanted source code repository from [GeneralizedWNet-Tensorflow1.x](https://github.com/falconjhc/GeneralizedWNet-Tensorflow1.x).
 
 
-![Generation Process with VAE+GAN](Style-00007-TrainingSet.gif)
-
+![Generation Process with only Reconstructions - 1](Style-00075-TestingSet-1.gif)
+![Generation Process with only Reconstructions - 2](Style-00075-TestingSet-2.gif)
 
 
 
